@@ -1,0 +1,1 @@
+"""Obsidian GDrive Sync package."""
