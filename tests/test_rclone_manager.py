@@ -40,4 +40,4 @@ def test_build_bisync_command_with_spaces_in_path(tmp_path):
 def test_get_auth_command():
     mgr = RcloneManager(rclone_binary="/usr/bin/rclone")
     cmd = mgr.get_auth_command("gdrive")
-    assert cmd == ["/usr/bin/rclone", "config", "create", "gdrive", "drive", "scope=drive"]
+    assert cmd == ["/usr/bin/rclone", "config", "create", "gdrive", "drive", "config_is_local=true", "scope=drive"]
