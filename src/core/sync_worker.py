@@ -16,6 +16,19 @@ class SyncStatus(Enum):
     PAUSED = "paused"
     ERROR = "error"
 
+def clean_error_message(err_msg: str) -> str:
+    lines = [line.strip() for line in err_msg.splitlines() if line.strip()]
+    error_lines = [l for l in lines if "ERROR" in l or "Fatal" in l]
+    if error_lines:
+        last = error_lines[-1]
+        if "ERROR :" in last:
+            return last.split("ERROR :", 1)[1].strip()
+        return last
+    non_notices = [l for l in lines if not l.startswith("NOTICE:")]
+    if non_notices:
+        return non_notices[-1]
+    return lines[-1] if lines else "Error en proceso rclone"
+
 class SyncWorker:
     def __init__(self, config: ConfigData, rclone_manager: RcloneManager):
         self.config = config
@@ -68,13 +81,28 @@ class SyncWorker:
             self._is_syncing = True
             self._notify(SyncStatus.SYNCING, "Sincronizando con Google Drive...")
             try:
+                self.rclone.ensure_remote_dir(self.config.remote_folder_name)
                 resync = not self.config.first_sync_done
                 cmd = self.rclone.build_bisync_command(
                     self.config.local_vault_path,
                     self.config.remote_folder_name,
                     resync=resync,
                 )
-                res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                try:
+                    res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                except subprocess.CalledProcessError as sub_err:
+                    err_text = sub_err.stderr or sub_err.stdout or ""
+                    if "Must run --resync to recover" in err_text:
+                        logger.info("Resincronización requerida por rclone. Reintentando con --resync...")
+                        recovery_cmd = self.rclone.build_bisync_command(
+                            self.config.local_vault_path,
+                            self.config.remote_folder_name,
+                            resync=True,
+                        )
+                        res = subprocess.run(recovery_cmd, capture_output=True, text=True, check=True)
+                    else:
+                        raise sub_err
+
                 self.config.first_sync_done = True
                 self.last_sync_time = time.strftime("%H:%M:%S")
                 self._notify(SyncStatus.SUCCESS, f"Sincronizado con éxito ({self.last_sync_time})")
@@ -82,7 +110,8 @@ class SyncWorker:
             except subprocess.CalledProcessError as e:
                 err_msg = e.stderr or e.stdout or "Error en proceso rclone"
                 logger.error(f"Rclone error ({e.returncode}): {err_msg}")
-                self._notify(SyncStatus.ERROR, f"Fallo de sincronización: {err_msg.strip()[:100]}")
+                summary = clean_error_message(err_msg)
+                self._notify(SyncStatus.ERROR, f"Fallo de sincronización: {summary[:120]}")
                 return False
             except Exception as e:
                 logger.error(f"Sync execution error: {e}")

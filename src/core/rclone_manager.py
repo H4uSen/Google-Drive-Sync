@@ -94,6 +94,17 @@ class RcloneManager:
             logger.debug(f"Error listing remotes: {e}")
             return False
 
+    def ensure_remote_dir(self, remote_folder: str, remote_name: str = "gdrive") -> bool:
+        bin_cmd = self.ensure_rclone_binary()
+        clean_remote = remote_folder.strip().strip("/")
+        remote_target = f"{remote_name}:{clean_remote}"
+        try:
+            subprocess.run([bin_cmd, "mkdir", remote_target], capture_output=True, check=True)
+            return True
+        except Exception as e:
+            logger.debug(f"Error ensuring remote dir {remote_target}: {e}")
+            return False
+
     def get_auth_command(self, remote_name: str = "gdrive") -> list[str]:
         bin_cmd = self.ensure_rclone_binary()
         if self.is_remote_configured(remote_name):
@@ -127,7 +138,6 @@ class RcloneManager:
             "none",
             "--conflict-loser",
             "pathname",
-            "--check-access",
             "--retries",
             "3",
             "-v",
