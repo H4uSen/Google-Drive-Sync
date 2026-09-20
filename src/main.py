@@ -61,8 +61,7 @@ def main():
         worker.stop()
         tray.stop()
         release_single_instance_lock()
-        app.after(0, app.destroy)
-        sys.exit(0)
+        app.after(0, app.quit)
 
     tray = TrayManager(worker=worker, on_open_gui=on_open_gui, on_exit=on_exit)
     worker.register_listener(tray.update_status)

@@ -185,6 +185,9 @@ class MainWindow(ctk.CTk):
     def _toggle_sync(self):
         self._save_form()
         if not self.worker._running:
+            if not self.cfg.local_vault_path:
+                self._append_log("⚠ Advertencia: Selecciona la ruta local de tu Vault de Obsidian antes de iniciar.")
+                return
             self.worker.start()
             self.btn_toggle_sync.configure(text="Detener Sincronización", fg_color="#C62828", hover_color="#B71C1C")
             self._append_log("Daemon de sincronización iniciado.")
