@@ -138,6 +138,8 @@ class RcloneManager:
             "none",
             "--conflict-loser",
             "pathname",
+            "--tpslimit",
+            "8",
             "--retries",
             "3",
             "-v",
