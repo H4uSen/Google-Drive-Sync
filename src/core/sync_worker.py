@@ -7,6 +7,7 @@ import logging
 from typing import Callable
 from src.core.config import ConfigData
 from src.core.rclone_manager import RcloneManager
+from src.core.vault_watcher import VaultWatcher
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,8 @@ class SyncWorker:
         self._sync_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._wakeup_event = threading.Event()
+        self.watcher: VaultWatcher | None = None
+        self._pending_sync = False
 
     def register_listener(self, cb: Callable[[SyncStatus, str], None]):
         if cb not in self._listeners:
@@ -84,6 +87,15 @@ class SyncWorker:
             return False
         self._wakeup_event.set()
         return True
+
+    def _on_watcher_change(self):
+        if self._paused or not self._running:
+            return
+        if self._is_syncing or self._sync_lock.locked():
+            logger.info("Cambios detectados durante sincronización activa. Marcando sincronización pendiente.")
+            self._pending_sync = True
+            return
+        self._wakeup_event.set()
 
     def _execute_sync(self) -> bool:
         if not self.config.local_vault_path or not self.config.local_vault_path.strip():
@@ -142,6 +154,10 @@ class SyncWorker:
         finally:
             self._is_syncing = False
             self._sync_lock.release()
+            if self._pending_sync:
+                self._pending_sync = False
+                logger.info("Ejecutando sincronización pendiente por cambios locales...")
+                self._wakeup_event.set()
 
     def _run_loop(self):
         while self._running:
@@ -157,11 +173,20 @@ class SyncWorker:
         if self._running:
             return
         self._running = True
+        if self.config.realtime_sync_enabled and self.config.local_vault_path:
+            self.watcher = VaultWatcher(
+                callback=self._on_watcher_change,
+                debounce_seconds=getattr(self.config, "debounce_delay_seconds", 5),
+            )
+            self.watcher.start(self.config.local_vault_path)
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
 
     def stop(self):
         self._running = False
+        if self.watcher:
+            self.watcher.stop()
+            self.watcher = None
         self._wakeup_event.set()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2)
