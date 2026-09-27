@@ -18,6 +18,8 @@ class MainWindow(ctk.CTk):
         self.worker = worker
         self.rclone_mgr = rclone_mgr
         self.cfg = self.config_mgr.load()
+        self.chk_realtime = None
+        self.entry_debounce = None
 
         if "tk" not in self.__dict__:
             self.tk = None
@@ -117,11 +119,33 @@ class MainWindow(ctk.CTk):
             command=self._on_toggle_autostart,
             font=ctk.CTkFont(size=13)
         )
-        self.chk_autostart.grid(row=6, column=0, columnspan=2, padx=16, pady=(4, 14), sticky="w")
+        self.chk_autostart.grid(row=6, column=0, columnspan=2, padx=16, pady=(4, 8), sticky="w")
         if is_autostart_enabled():
             self.chk_autostart.select()
         else:
             self.chk_autostart.deselect()
+
+        # Checkbox Sincronización en tiempo real
+        self.chk_realtime = ctk.CTkCheckBox(
+            self.form_frame,
+            text="Sincronización en tiempo real (detectar cambios al guardar)",
+            font=ctk.CTkFont(size=13),
+            command=self._save_form,
+        )
+        self.chk_realtime.grid(row=7, column=0, columnspan=2, padx=16, pady=(4, 4), sticky="w")
+        if self.cfg.realtime_sync_enabled:
+            self.chk_realtime.select()
+        else:
+            self.chk_realtime.deselect()
+
+        # Fila Debounce Seconds
+        self.debounce_row = ctk.CTkFrame(self.form_frame, fg_color="transparent")
+        self.debounce_row.grid(row=8, column=0, columnspan=2, padx=16, pady=(2, 10), sticky="w")
+        ctk.CTkLabel(self.debounce_row, text="Espera tras escribir (segundos):", font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 8))
+        self.entry_debounce = ctk.CTkEntry(self.debounce_row, width=60)
+        self.entry_debounce.insert(0, str(self.cfg.debounce_delay_seconds))
+        self.entry_debounce.pack(side="left")
+        self.entry_debounce.bind("<FocusOut>", lambda _: self._save_form())
 
         # 4. Acciones Principales
         self.action_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -164,19 +188,46 @@ class MainWindow(ctk.CTk):
     def _save_form(self):
         try:
             interval = int(self.entry_interval.get())
-        except ValueError:
+        except (ValueError, AttributeError):
             interval = 2
-        self.cfg.local_vault_path = self.entry_local.get().strip()
+        if hasattr(self, "entry_local") and self.entry_local is not None:
+            self.cfg.local_vault_path = self.entry_local.get().strip()
 
-        raw_remote = self.entry_remote.get().strip().strip("/\\").replace("\\", "/")
-        parts = [p for p in raw_remote.split("/") if p]
-        if not raw_remote or raw_remote == "." or ".." in parts:
-            raw_remote = "ObsidianVault"
-        self.cfg.remote_folder_name = raw_remote
+        if hasattr(self, "entry_remote") and self.entry_remote is not None:
+            raw_remote = self.entry_remote.get().strip().strip("/\\").replace("\\", "/")
+            parts = [p for p in raw_remote.split("/") if p]
+            if not raw_remote or raw_remote == "." or ".." in parts:
+                raw_remote = "ObsidianVault"
+            self.cfg.remote_folder_name = raw_remote
 
         self.cfg.sync_interval_minutes = max(1, interval)
+
+        try:
+            debounce = int(self.entry_debounce.get())
+        except (ValueError, AttributeError):
+            debounce = 5
+        self.cfg.debounce_delay_seconds = max(1, min(60, debounce))
+
+        if hasattr(self, "chk_realtime") and self.chk_realtime is not None:
+            self.cfg.realtime_sync_enabled = bool(self.chk_realtime.get())
+
         self.config_mgr.save(self.cfg)
         self.worker.config = self.cfg
+
+        # Actualizar watcher en caliente si el worker está activo
+        if getattr(self.worker, "_running", False):
+            if not self.cfg.realtime_sync_enabled and self.worker.watcher:
+                self.worker.watcher.stop()
+                self.worker.watcher = None
+            elif self.cfg.realtime_sync_enabled and not self.worker.watcher and self.cfg.local_vault_path:
+                from src.core.vault_watcher import VaultWatcher
+                self.worker.watcher = VaultWatcher(
+                    callback=self.worker._on_watcher_change,
+                    debounce_seconds=self.cfg.debounce_delay_seconds,
+                )
+                self.worker.watcher.start(self.cfg.local_vault_path)
+            elif self.worker.watcher:
+                self.worker.watcher.handler.debounce_seconds = self.cfg.debounce_delay_seconds
 
     def _handle_auth(self):
         def _run_auth():

@@ -216,6 +216,162 @@ def test_build_ui_autostart_checkbox_deselected():
         finally:
             win.destroy()
 
+def test_build_ui_realtime_controls_selected():
+    import os
+    import pytest
+    from unittest.mock import MagicMock
+    from src.gui.app_window import MainWindow
+
+    if not os.environ.get("DISPLAY"):
+        pytest.skip("DISPLAY not available")
+
+    mock_cfg_mgr = MagicMock()
+    mock_cfg_mgr.load.return_value = ConfigData(realtime_sync_enabled=True, debounce_delay_seconds=7)
+
+    win = MainWindow(config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
+    try:
+        assert win.chk_realtime.get() == 1
+        assert win.entry_debounce.get() == "7"
+    finally:
+        win.destroy()
+
+def test_build_ui_realtime_controls_deselected():
+    import os
+    import pytest
+    from unittest.mock import MagicMock
+    from src.gui.app_window import MainWindow
+
+    if not os.environ.get("DISPLAY"):
+        pytest.skip("DISPLAY not available")
+
+    mock_cfg_mgr = MagicMock()
+    mock_cfg_mgr.load.return_value = ConfigData(realtime_sync_enabled=False, debounce_delay_seconds=15)
+
+    win = MainWindow(config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
+    try:
+        assert win.chk_realtime.get() == 0
+        assert win.entry_debounce.get() == "15"
+    finally:
+        win.destroy()
+
+
+def test_gui_realtime_sync_form_persistence(tmp_path):
+    from unittest.mock import patch, MagicMock
+    from src.gui.app_window import MainWindow
+
+    vault = tmp_path / "valid_vault"
+    vault.mkdir()
+    cfg = ConfigData(local_vault_path=str(vault), realtime_sync_enabled=True, debounce_delay_seconds=8)
+    mock_cfg_mgr = MagicMock()
+    mock_cfg_mgr.load.return_value = cfg
+    mock_worker = MagicMock()
+    mock_rclone = MagicMock()
+
+    with patch("customtkinter.CTk.__init__", return_value=None):
+        win = MainWindow(config_manager=mock_cfg_mgr, worker=mock_worker, rclone_mgr=mock_rclone)
+        assert hasattr(win, "chk_realtime")
+        assert hasattr(win, "entry_debounce")
+        assert win.cfg.debounce_delay_seconds == 8
+
+def test_save_form_debounce_clamping_and_persistence(tmp_path):
+    from unittest.mock import patch, MagicMock
+    from src.gui.app_window import MainWindow
+
+    vault = tmp_path / "valid_vault"
+    vault.mkdir()
+    cfg = ConfigData(local_vault_path=str(vault), realtime_sync_enabled=False, debounce_delay_seconds=5)
+    mock_cfg_mgr = MagicMock()
+    mock_cfg_mgr.load.return_value = cfg
+    mock_worker = MagicMock()
+    mock_worker._running = False
+    mock_rclone = MagicMock()
+
+    with patch("customtkinter.CTk.__init__", return_value=None):
+        win = MainWindow(config_manager=mock_cfg_mgr, worker=mock_worker, rclone_mgr=mock_rclone)
+        win.entry_interval = MagicMock()
+        win.entry_interval.get.return_value = "5"
+        win.entry_local = MagicMock()
+        win.entry_local.get.return_value = str(vault)
+        win.entry_remote = MagicMock()
+        win.entry_remote.get.return_value = "ObsidianVault"
+        win.chk_realtime = MagicMock()
+        win.chk_realtime.get.return_value = 1
+        win.entry_debounce = MagicMock()
+
+        # Caso 1: valor normal dentro del rango (10)
+        win.entry_debounce.get.return_value = "10"
+        win._save_form()
+        assert win.cfg.debounce_delay_seconds == 10
+        assert win.cfg.realtime_sync_enabled is True
+        mock_cfg_mgr.save.assert_called_with(win.cfg)
+        assert mock_worker.config == win.cfg
+
+        # Caso 2: valor menor a 1 se ajusta a 1
+        win.entry_debounce.get.return_value = "0"
+        win._save_form()
+        assert win.cfg.debounce_delay_seconds == 1
+
+        # Caso 3: valor mayor a 60 se ajusta a 60
+        win.entry_debounce.get.return_value = "999"
+        win._save_form()
+        assert win.cfg.debounce_delay_seconds == 60
+
+        # Caso 4: valor inválido usa 5 por defecto
+        win.entry_debounce.get.return_value = "invalido"
+        win._save_form()
+        assert win.cfg.debounce_delay_seconds == 5
+
+def test_save_form_hot_reloads_watcher(tmp_path):
+    from unittest.mock import patch, MagicMock
+    from src.gui.app_window import MainWindow
+
+    vault = tmp_path / "valid_vault"
+    vault.mkdir()
+    cfg = ConfigData(local_vault_path=str(vault), realtime_sync_enabled=True, debounce_delay_seconds=5)
+    mock_cfg_mgr = MagicMock()
+    mock_cfg_mgr.load.return_value = cfg
+    mock_worker = MagicMock()
+    mock_worker._running = True
+    mock_watcher = MagicMock()
+    mock_worker.watcher = mock_watcher
+
+    with patch("customtkinter.CTk.__init__", return_value=None):
+        win = MainWindow(config_manager=mock_cfg_mgr, worker=mock_worker, rclone_mgr=MagicMock())
+        win.entry_interval = MagicMock()
+        win.entry_interval.get.return_value = "5"
+        win.entry_local = MagicMock()
+        win.entry_local.get.return_value = str(vault)
+        win.entry_remote = MagicMock()
+        win.entry_remote.get.return_value = "ObsidianVault"
+        win.chk_realtime = MagicMock()
+        win.entry_debounce = MagicMock()
+
+        # 1. Realtime activo -> watcher actualiza debounce
+        win.chk_realtime.get.return_value = 1
+        win.entry_debounce.get.return_value = "12"
+        win._save_form()
+        assert mock_watcher.handler.debounce_seconds == 12
+
+        # 2. Desactivar realtime -> detiene watcher y lo pone en None
+        win.chk_realtime.get.return_value = 0
+        win._save_form()
+        mock_watcher.stop.assert_called_once()
+        assert mock_worker.watcher is None
+
+        # 3. Reactivar realtime -> crea nuevo VaultWatcher y lo inicia
+        win.chk_realtime.get.return_value = 1
+        with patch("src.core.vault_watcher.VaultWatcher") as mock_vw_class:
+            created_watcher = MagicMock()
+            mock_vw_class.return_value = created_watcher
+            win._save_form()
+            mock_vw_class.assert_called_once_with(
+                callback=mock_worker._on_watcher_change,
+                debounce_seconds=12,
+            )
+            created_watcher.start.assert_called_once_with(str(vault))
+            assert mock_worker.watcher == created_watcher
+
+
 
 
 
