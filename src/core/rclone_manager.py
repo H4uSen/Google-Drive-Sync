@@ -6,6 +6,7 @@ import urllib.request
 import zipfile
 import stat
 import io
+import json
 import logging
 from pathlib import Path
 from src.utils.paths import get_filters_file_path, get_app_dir
@@ -184,3 +185,40 @@ class RcloneManager:
         if resync:
             cmd.append("--resync")
         return cmd
+
+    def get_storage_quota(self, remote_name: str = "gdrive") -> dict | None:
+        bin_cmd = self.ensure_rclone_binary()
+        try:
+            res = subprocess.run(
+                [bin_cmd, "about", f"{remote_name}:", "--json"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=True,
+            )
+            data = json.loads(res.stdout)
+            total = data.get("total")
+            used = data.get("used", 0)
+            free = data.get("free", 0)
+            trashed = data.get("trashed", 0)
+
+            def _fmt(b: int | float) -> str:
+                if b >= 1024 ** 3:
+                    return f"{b / (1024 ** 3):.1f} GB"
+                return f"{b / (1024 ** 2):.1f} MB"
+
+            percent = (used / total) if (total and total > 0) else 0.0
+            return {
+                "total": total,
+                "used": used,
+                "free": free,
+                "trashed": trashed,
+                "total_str": _fmt(total) if total else "Ilimitado",
+                "used_str": _fmt(used),
+                "free_str": _fmt(free),
+                "percent": percent,
+                "percent_str": f"{percent * 100:.1f}%",
+            }
+        except Exception as e:
+            logger.debug(f"Error fetching storage quota for {remote_name}: {e}")
+            return None
