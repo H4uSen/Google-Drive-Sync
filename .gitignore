@@ -5,3 +5,5 @@ __pycache__/
 *.tmp
 .superpowers/
 bin/
+build/
+dist/
