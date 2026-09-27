@@ -1,5 +1,6 @@
 import threading
 import logging
+import time
 from typing import Callable
 from PIL import Image, ImageDraw
 import pystray
@@ -8,6 +9,8 @@ from src.core.sync_worker import SyncWorker, SyncStatus
 logger = logging.getLogger(__name__)
 
 class TrayManager:
+    COOLDOWN_SECONDS: float = 900.0  # 15 minutos
+
     def __init__(
         self,
         worker: SyncWorker,
@@ -19,6 +22,8 @@ class TrayManager:
         self.on_exit = on_exit
         self.icon: pystray.Icon | None = None
         self._status_text = "Inactivo"
+        self._last_notified_error: str = ""
+        self._last_notification_time: float = 0.0
 
     @staticmethod
     def create_icon_image(color_hex: str) -> Image.Image:
@@ -48,6 +53,13 @@ class TrayManager:
         else:
             self.worker.pause()
 
+    def notify(self, title: str, message: str):
+        if self.icon and hasattr(self.icon, "notify"):
+            try:
+                self.icon.notify(message, title)
+            except Exception as e:
+                logger.warning(f"Error mostrando notificación de escritorio: {e}")
+
     def update_status(self, status: SyncStatus, msg: str):
         self._status_text = msg
         if self.icon:
@@ -56,6 +68,20 @@ class TrayManager:
                 self.icon.title = f"Obsidian GDrive Sync: {msg}"
             except Exception as e:
                 logger.debug(f"Error updating tray icon: {e}")
+
+        # Lógica de notificaciones con deduplicación y cooldown
+        if status == SyncStatus.ERROR:
+            now = time.time()
+            is_same_error = (msg == self._last_notified_error)
+            within_cooldown = (now - self._last_notification_time < self.COOLDOWN_SECONDS)
+
+            if not (is_same_error and within_cooldown):
+                self._last_notified_error = msg
+                self._last_notification_time = now
+                self.notify("Obsidian GDrive Sync - Error", msg)
+        elif status in (SyncStatus.SUCCESS, SyncStatus.IDLE):
+            self._last_notified_error = ""
+            self._last_notification_time = 0.0
 
     def start(self):
         img = self.create_icon_image(SyncStatus.IDLE.color)
