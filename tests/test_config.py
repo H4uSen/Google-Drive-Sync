@@ -72,3 +72,21 @@ def test_config_autostart_backward_compatibility(tmp_path):
     cfg = mgr.load()
     assert cfg.autostart_enabled is False
 
+def test_config_realtime_sync_defaults_and_validation(tmp_path):
+    config_file = tmp_path / "config.json"
+    mgr = ConfigManager(config_file=config_file)
+    cfg = mgr.load()
+    assert cfg.realtime_sync_enabled is True
+    assert cfg.debounce_delay_seconds == 5
+
+    # Validación de límites en clean()
+    cfg.debounce_delay_seconds = 0
+    cfg.clean()
+    assert cfg.debounce_delay_seconds == 5
+
+    cfg.debounce_delay_seconds = 10
+    mgr.save(cfg)
+    loaded = mgr.load()
+    assert loaded.debounce_delay_seconds == 10
+
+

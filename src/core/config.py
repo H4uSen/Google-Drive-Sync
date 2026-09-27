@@ -18,10 +18,14 @@ class ConfigData:
     last_sync_timestamp: str = ""
     last_sync_status: str = "idle"
     autostart_enabled: bool = False
+    realtime_sync_enabled: bool = True
+    debounce_delay_seconds: int = 5
 
     def clean(self):
         if not isinstance(self.sync_interval_minutes, int) or self.sync_interval_minutes < 1:
             self.sync_interval_minutes = 2
+        if not isinstance(self.debounce_delay_seconds, int) or self.debounce_delay_seconds < 1:
+            self.debounce_delay_seconds = 5
         if not self.remote_folder_name.strip():
             self.remote_folder_name = "ObsidianVault"
 
