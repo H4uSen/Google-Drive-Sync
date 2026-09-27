@@ -17,6 +17,7 @@ class ConfigData:
     first_sync_done: bool = False
     last_sync_timestamp: str = ""
     last_sync_status: str = "idle"
+    autostart_enabled: bool = False
 
     def clean(self):
         if not isinstance(self.sync_interval_minutes, int) or self.sync_interval_minutes < 1:

@@ -53,3 +53,22 @@ def test_config_file_permissions(tmp_path):
     mode = stat.S_IMODE(config_file.stat().st_mode)
     assert mode == 0o600
 
+def test_config_autostart_default_and_persistence(tmp_path):
+    config_file = tmp_path / "config.json"
+    mgr = ConfigManager(config_file=config_file)
+    cfg = mgr.load()
+    assert cfg.autostart_enabled is False
+
+    cfg.autostart_enabled = True
+    mgr.save(cfg)
+
+    loaded = mgr.load()
+    assert loaded.autostart_enabled is True
+
+def test_config_autostart_backward_compatibility(tmp_path):
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps({"local_vault_path": "/tmp/test"}), encoding="utf-8")
+    mgr = ConfigManager(config_file=config_file)
+    cfg = mgr.load()
+    assert cfg.autostart_enabled is False
+
