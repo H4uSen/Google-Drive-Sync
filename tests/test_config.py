@@ -89,4 +89,72 @@ def test_config_realtime_sync_defaults_and_validation(tmp_path):
     loaded = mgr.load()
     assert loaded.debounce_delay_seconds == 10
 
+def test_vault_profile_and_clean():
+    from src.core.config import VaultProfile
+    vp = VaultProfile(id="v1", name="", remote_folder="", sync_interval_minutes=0, debounce_delay_seconds=-1)
+    vp.clean()
+    assert vp.name == "Principal"
+    assert vp.remote_folder == "ObsidianVault"
+    assert vp.sync_interval_minutes == 2
+    assert vp.debounce_delay_seconds == 5
+
+def test_config_mono_to_multi_vault_migration(tmp_path):
+    from src.core.config import VaultProfile
+    config_file = tmp_path / "config.json"
+    legacy_data = {
+        "local_vault_path": "/legacy/path",
+        "remote_folder_name": "LegacyRemote",
+        "sync_interval_minutes": 7,
+        "autostart_enabled": True
+    }
+    config_file.write_text(json.dumps(legacy_data), encoding="utf-8")
+    mgr = ConfigManager(config_file=config_file)
+    cfg = mgr.load()
+
+    assert len(cfg.vaults) == 1
+    v0 = cfg.vaults[0]
+    assert isinstance(v0, VaultProfile)
+    assert v0.local_path == "/legacy/path"
+    assert v0.remote_folder == "LegacyRemote"
+    assert v0.sync_interval_minutes == 7
+    assert cfg.active_vault_id == v0.id
+    assert cfg.get_active_vault().id == v0.id
+    assert cfg.local_vault_path == "/legacy/path"
+
+def test_config_multi_vault_crud_and_persistence(tmp_path):
+    config_file = tmp_path / "config.json"
+    mgr = ConfigManager(config_file=config_file)
+    cfg = mgr.load()
+    assert len(cfg.vaults) == 1
+
+    # Add second vault
+    v2 = cfg.add_vault("Segundo Vault", "/path/v2", "RemoteV2")
+    assert len(cfg.vaults) == 2
+    assert v2.name == "Segundo Vault"
+
+    # Switch active
+    assert cfg.set_active_vault(v2.id) is True
+    assert cfg.active_vault_id == v2.id
+    assert cfg.local_vault_path == "/path/v2"
+    assert cfg.remote_folder_name == "RemoteV2"
+
+    mgr.save(cfg)
+    loaded = mgr.load()
+    assert len(loaded.vaults) == 2
+    assert loaded.active_vault_id == v2.id
+    assert loaded.get_active_vault().name == "Segundo Vault"
+    assert loaded.local_vault_path == "/path/v2"
+
+    # Remove active vault, falls back to remaining
+    orig_id = cfg.vaults[0].id
+    assert loaded.remove_vault(v2.id) is True
+    assert len(loaded.vaults) == 1
+    assert loaded.active_vault_id == orig_id
+    assert loaded.local_vault_path == loaded.vaults[0].local_path
+
+    # Cannot delete the only remaining vault
+    assert loaded.remove_vault(orig_id) is False
+    assert len(loaded.vaults) == 1
+
+
 
