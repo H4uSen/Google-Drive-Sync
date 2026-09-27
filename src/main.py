@@ -81,9 +81,18 @@ def main():
     except Exception as e:
         logger.warning(f"No se pudo iniciar el icono en System Tray: {e}")
 
-    # Si se pasa --minimized no mostramos la ventana al iniciar
+    # Si se pasa --minimized ocultamos la ventana y evaluamos auto-arranque
     if "--minimized" in sys.argv:
         app.withdraw()
+        if app.can_auto_start_sync():
+            logger.info("Iniciando motor de sincronización automáticamente (--minimized)...")
+            app.start_sync_engine()
+        else:
+            logger.info("Obsidian GDrive Sync iniciado en segundo plano; esperando configuración.")
+            tray.notify(
+                "Obsidian GDrive Sync",
+                "Aplicación iniciada en segundo plano. Abre la ventana para configurar tu Vault."
+            )
     
     try:
         app.mainloop()

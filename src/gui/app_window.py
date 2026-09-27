@@ -220,7 +220,7 @@ class MainWindow(ctk.CTk):
         if not self.cfg.local_vault_path:
             return False
         vault_p = Path(self.cfg.local_vault_path).resolve()
-        if not vault_p.is_dir() or vault_p == Path(vault_p.root) or vault_p == Path.home():
+        if not vault_p.is_dir() or vault_p == Path(vault_p.anchor) or vault_p == Path.home():
             return False
         return self.rclone_mgr.is_remote_configured("gdrive")
 
@@ -244,7 +244,7 @@ class MainWindow(ctk.CTk):
             if not vault_p.is_dir():
                 self._append_log(f"⚠ Error: La carpeta del Vault no existe o no es accesible: {self.cfg.local_vault_path}")
                 return
-            if vault_p == Path(vault_p.root) or vault_p == Path.home():
+            if vault_p == Path(vault_p.anchor) or vault_p == Path.home():
                 self._append_log("⚠ Error de seguridad: No se permite sincronizar la raíz del sistema o la carpeta de usuario.")
                 return
             self.start_sync_engine()
