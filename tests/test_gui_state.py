@@ -404,6 +404,74 @@ def test_gui_storage_quota_display():
         text = kwargs.get("text", "")
         assert "12.0 GB" in text and "80.0%" in text
 
+def test_gui_multi_vault_switching():
+    from unittest.mock import patch, MagicMock
+    from src.gui.app_window import MainWindow
+    from src.core.config import ConfigData, VaultProfile
+
+    v1 = VaultProfile(id="v1", name="Vault 1", local_path="/local/v1", remote_folder="Remote1")
+    v2 = VaultProfile(id="v2", name="Vault 2", local_path="/local/v2", remote_folder="Remote2")
+    cfg = ConfigData(vaults=[v1, v2], active_vault_id="v1")
+    mock_cfg_mgr = MagicMock()
+    mock_cfg_mgr.load.return_value = cfg
+
+    with patch("customtkinter.CTk.__init__", return_value=None):
+        win = MainWindow(config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
+        assert hasattr(win, "vault_option_menu")
+        win.entry_local = MagicMock()
+        win.entry_remote = MagicMock()
+        win.entry_interval = MagicMock()
+        win.chk_realtime = MagicMock()
+        win.entry_debounce = MagicMock()
+        win.vault_option_menu = MagicMock()
+
+        # Switch to Vault 2
+        win._on_vault_selected("Vault 2")
+        assert win.cfg.active_vault_id == "v2"
+        win.entry_local.delete.assert_called_with(0, "end")
+        win.entry_local.insert.assert_called_with(0, "/local/v2")
+        win.entry_remote.insert.assert_called_with(0, "Remote2")
+
+def test_gui_add_and_delete_vault():
+    from unittest.mock import patch, MagicMock
+    from src.gui.app_window import MainWindow
+    from src.core.config import ConfigData, VaultProfile
+
+    v1 = VaultProfile(id="v1", name="Vault 1", local_path="/local/v1", remote_folder="Remote1")
+    cfg = ConfigData(vaults=[v1], active_vault_id="v1")
+    mock_cfg_mgr = MagicMock()
+    mock_cfg_mgr.load.return_value = cfg
+
+    with patch("customtkinter.CTk.__init__", return_value=None):
+        win = MainWindow(config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
+        win.entry_local = MagicMock()
+        win.entry_remote = MagicMock()
+        win.entry_interval = MagicMock()
+        win.chk_realtime = MagicMock()
+        win.entry_debounce = MagicMock()
+        win.vault_option_menu = MagicMock()
+
+        # Add a vault
+        with patch("customtkinter.CTkInputDialog") as mock_input:
+            mock_dialog = MagicMock()
+            mock_dialog.get_input.return_value = "Nuevo Proyecto"
+            mock_input.return_value = mock_dialog
+
+            win._on_add_vault()
+            assert len(win.cfg.vaults) == 2
+            assert win.cfg.get_active_vault().name == "Nuevo Proyecto"
+            win.vault_option_menu.configure.assert_called()
+
+        # Delete vault
+        win._on_delete_vault()
+        assert len(win.cfg.vaults) == 1
+        assert win.cfg.get_active_vault().id == "v1"
+
+        # Attempt to delete last vault: remains 1
+        win._on_delete_vault()
+        assert len(win.cfg.vaults) == 1
+
+
 
 
 

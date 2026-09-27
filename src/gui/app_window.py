@@ -23,6 +23,9 @@ class MainWindow(ctk.CTk):
         self.quota_bar = None
         self.quota_label = None
         self.quota_container = None
+        self.vault_option_menu = None
+        self.btn_add_vault = None
+        self.btn_del_vault = None
 
         if "tk" not in self.__dict__:
             self.tk = None
@@ -86,7 +89,49 @@ class MainWindow(ctk.CTk):
         self.quota_bar.set(0)
         self.quota_bar.pack(fill="x", pady=(2, 10))
 
-        # 3. Formulario de Configuración
+        # 3. Selector Multi-Vault
+        self.vault_frame = ctk.CTkFrame(self, corner_radius=8)
+        self.vault_frame.pack(fill="x", padx=16, pady=8)
+
+        self.vault_row = ctk.CTkFrame(self.vault_frame, fg_color="transparent")
+        self.vault_row.pack(fill="x", padx=16, pady=10)
+
+        ctk.CTkLabel(
+            self.vault_row,
+            text="Perfil de Vault:",
+            font=ctk.CTkFont(weight="bold", size=13)
+        ).pack(side="left", padx=(0, 10))
+
+        vault_names = [v.name for v in self.cfg.vaults]
+        active_vault = self.cfg.get_active_vault()
+        self.vault_option_menu = ctk.CTkOptionMenu(
+            self.vault_row,
+            values=vault_names,
+            command=self._on_vault_selected,
+            width=180
+        )
+        self.vault_option_menu.set(active_vault.name)
+        self.vault_option_menu.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+        self.btn_add_vault = ctk.CTkButton(
+            self.vault_row,
+            text="+ Añadir",
+            width=80,
+            command=self._on_add_vault
+        )
+        self.btn_add_vault.pack(side="left", padx=(0, 6))
+
+        self.btn_del_vault = ctk.CTkButton(
+            self.vault_row,
+            text="Eliminar",
+            fg_color="#D32F2F",
+            hover_color="#B71C1C",
+            width=80,
+            command=self._on_delete_vault
+        )
+        self.btn_del_vault.pack(side="left")
+
+        # 4. Formulario de Configuración
         self.form_frame = ctk.CTkFrame(self, corner_radius=8)
         self.form_frame.pack(fill="x", padx=16, pady=8)
         self.form_frame.grid_columnconfigure(0, weight=1)
@@ -196,6 +241,75 @@ class MainWindow(ctk.CTk):
         self.log_box.pack(fill="both", expand=True, padx=16, pady=(0, 16))
         self._append_log("Bienvenido a Obsidian GDrive Sync.")
         self._append_log("Configuración cargada correctamente.")
+
+    def _on_vault_selected(self, selected_name: str):
+        target = next((v for v in self.cfg.vaults if v.name == selected_name), None)
+        if target:
+            self._save_form()
+            self.cfg.set_active_vault(target.id)
+            self.config_mgr.save(self.cfg)
+            self._load_active_vault_into_form()
+            if getattr(self.worker, "_running", False) and self.worker.watcher:
+                self.worker.watcher.stop()
+                self.worker.watcher = None
+                if self.cfg.realtime_sync_enabled and self.cfg.local_vault_path:
+                    from src.core.vault_watcher import VaultWatcher
+                    self.worker.watcher = VaultWatcher(
+                        callback=self.worker._on_watcher_change,
+                        debounce_seconds=self.cfg.debounce_delay_seconds,
+                    )
+                    self.worker.watcher.start(self.cfg.local_vault_path)
+            self._append_log(f"Cambiado a perfil de Vault: '{target.name}'")
+
+    def _load_active_vault_into_form(self):
+        active = self.cfg.get_active_vault()
+        if getattr(self, "entry_local", None) and hasattr(self.entry_local, "delete"):
+            self.entry_local.delete(0, "end")
+            self.entry_local.insert(0, active.local_path)
+        if getattr(self, "entry_remote", None) and hasattr(self.entry_remote, "delete"):
+            self.entry_remote.delete(0, "end")
+            self.entry_remote.insert(0, active.remote_folder)
+        if getattr(self, "entry_interval", None) and hasattr(self.entry_interval, "delete"):
+            self.entry_interval.delete(0, "end")
+            self.entry_interval.insert(0, str(active.sync_interval_minutes))
+        if getattr(self, "chk_realtime", None):
+            if active.realtime_sync_enabled and hasattr(self.chk_realtime, "select"):
+                self.chk_realtime.select()
+            elif hasattr(self.chk_realtime, "deselect"):
+                self.chk_realtime.deselect()
+        if getattr(self, "entry_debounce", None) and hasattr(self.entry_debounce, "delete"):
+            self.entry_debounce.delete(0, "end")
+            self.entry_debounce.insert(0, str(active.debounce_delay_seconds))
+
+    def _on_add_vault(self):
+        dialog = ctk.CTkInputDialog(text="Nombre del nuevo Vault:", title="Añadir Vault")
+        vault_name = dialog.get_input()
+        if vault_name and vault_name.strip():
+            name = vault_name.strip()
+            self._save_form()
+            new_vault = self.cfg.add_vault(name=name)
+            self.cfg.set_active_vault(new_vault.id)
+            self.config_mgr.save(self.cfg)
+            if getattr(self, "vault_option_menu", None) and hasattr(self.vault_option_menu, "configure"):
+                self.vault_option_menu.configure(values=[v.name for v in self.cfg.vaults])
+                self.vault_option_menu.set(new_vault.name)
+            self._load_active_vault_into_form()
+            self._append_log(f"Perfil de Vault '{name}' añadido.")
+
+    def _on_delete_vault(self):
+        if len(self.cfg.vaults) <= 1:
+            self._append_log("No se puede eliminar el único perfil de Vault restante.")
+            return
+        active = self.cfg.get_active_vault()
+        name = active.name
+        self.cfg.remove_vault(active.id)
+        self.config_mgr.save(self.cfg)
+        new_active = self.cfg.get_active_vault()
+        if getattr(self, "vault_option_menu", None) and hasattr(self.vault_option_menu, "configure"):
+            self.vault_option_menu.configure(values=[v.name for v in self.cfg.vaults])
+            self.vault_option_menu.set(new_active.name)
+        self._load_active_vault_into_form()
+        self._append_log(f"Perfil de Vault '{name}' eliminado.")
 
     def _browse_folder(self):
         selected = filedialog.askdirectory(title="Selecciona la Carpeta de tu Vault de Obsidian")
