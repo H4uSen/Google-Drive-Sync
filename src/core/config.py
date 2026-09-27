@@ -12,11 +12,9 @@ class ConfigData:
     local_vault_path: str = ""
     remote_folder_name: str = "ObsidianVault"
     sync_interval_minutes: int = 2
-    autostart_enabled: bool = False
     first_sync_done: bool = False
     last_sync_timestamp: str = ""
     last_sync_status: str = "idle"
-    theme: str = "dark"
 
     def clean(self):
         if not isinstance(self.sync_interval_minutes, int) or self.sync_interval_minutes < 1:
@@ -36,7 +34,8 @@ class ConfigManager:
         try:
             with open(self.config_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            cfg = ConfigData(**data)
+            fields = ConfigData.__dataclass_fields__.keys()
+            cfg = ConfigData(**{k: v for k, v in data.items() if k in fields})
             cfg.clean()
             return cfg
         except Exception as e:

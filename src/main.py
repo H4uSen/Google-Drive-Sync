@@ -32,10 +32,8 @@ def acquire_single_instance_lock() -> bool:
         return True
 
 def release_single_instance_lock():
-    lock_file = get_app_dir() / "app.lock"
     try:
-        if lock_file.exists():
-            lock_file.unlink()
+        (get_app_dir() / "app.lock").unlink(missing_ok=True)
     except Exception:
         pass
 

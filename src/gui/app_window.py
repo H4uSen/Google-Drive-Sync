@@ -4,16 +4,10 @@ import subprocess
 from tkinter import filedialog
 import customtkinter as ctk
 from src.core.config import ConfigManager, ConfigData
-from src.core.sync_worker import SyncWorker, SyncStatus
+from src.core.sync_worker import SyncWorker, SyncStatus, COLOR_MAP
 from src.core.rclone_manager import RcloneManager
 
-STATUS_COLORS = {
-    SyncStatus.IDLE: "#4CAF50",      # Verde
-    SyncStatus.SUCCESS: "#4CAF50",   # Verde
-    SyncStatus.SYNCING: "#2196F3",   # Azul
-    SyncStatus.PAUSED: "#FFC107",    # Amarillo
-    SyncStatus.ERROR: "#F44336",     # Rojo
-}
+STATUS_COLORS = COLOR_MAP
 
 class MainWindow(ctk.CTk):
     def __init__(self, config_manager: ConfigManager, worker: SyncWorker, rclone_mgr: RcloneManager):
@@ -26,7 +20,7 @@ class MainWindow(ctk.CTk):
         self.title("Obsidian GDrive Sync")
         self.geometry("680x600")
         self.minsize(600, 520)
-        ctk.set_appearance_mode(self.cfg.theme)
+        ctk.set_appearance_mode("dark")
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self.on_close_requested)

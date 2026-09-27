@@ -19,16 +19,14 @@ def test_save_and_load_config(tmp_path):
         local_vault_path="/tmp/myvault",
         remote_folder_name="BackupVault",
         sync_interval_minutes=5,
-        autostart_enabled=True,
     )
     manager.save(cfg)
     loaded = manager.load()
     assert loaded.local_vault_path == "/tmp/myvault"
     assert loaded.sync_interval_minutes == 5
-    assert loaded.autostart_enabled is True
+    assert loaded.remote_folder_name == "BackupVault"
 
 def test_interval_validation_clamping(tmp_path):
-    # Review Focus 1: intervalo < 1 debe ajustarse a 1 o valor por defecto
     config_file = tmp_path / "config.json"
     manager = ConfigManager(config_file=config_file)
     cfg = ConfigData(sync_interval_minutes=0)
@@ -37,7 +35,6 @@ def test_interval_validation_clamping(tmp_path):
     assert loaded.sync_interval_minutes >= 1
 
 def test_corrupt_config_fallback(tmp_path):
-    # Review Focus 2: JSON corrupto se recupera con defaults sin crashear
     config_file = tmp_path / "config.json"
     config_file.write_text("{corrupted_json_content...", encoding="utf-8")
     manager = ConfigManager(config_file=config_file)

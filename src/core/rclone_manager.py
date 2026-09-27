@@ -1,4 +1,5 @@
 import sys
+import os
 import shutil
 import subprocess
 import urllib.request
@@ -7,10 +8,25 @@ import stat
 import io
 import logging
 from pathlib import Path
-from src.core.filter_rules import write_filters_file
 from src.utils.paths import get_filters_file_path, get_app_dir
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_FILTER_RULES = [
+    "- .git/**",
+    "- .gitignore",
+    "- .obsidian/workspace.json",
+    "- .obsidian/workspace-mobile.json",
+    "- .obsidian/cache/**",
+    "- *.tmp",
+    "+ *",
+]
+
+def write_filters_file(destination_path: Path | None = None) -> Path:
+    target = destination_path or get_filters_file_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(DEFAULT_FILTER_RULES) + "\n", encoding="utf-8")
+    return target
 
 class RcloneManager:
     def __init__(self, rclone_binary: str | None = None):
@@ -32,14 +48,13 @@ class RcloneManager:
         if system_bin:
             return system_bin
         
-        local_bin = cls.get_local_binary_path()
-        if local_bin.exists() and os_is_executable(local_bin):
-            return str(local_bin)
-
-        # Check project root bin
-        project_bin = Path(__file__).resolve().parent.parent.parent / "bin" / ("rclone.exe" if sys.platform.startswith("win") else "rclone")
-        if project_bin.exists() and os_is_executable(project_bin):
-            return str(project_bin)
+        candidates = [
+            cls.get_local_binary_path(),
+            Path(__file__).resolve().parent.parent.parent / "bin" / ("rclone.exe" if sys.platform.startswith("win") else "rclone"),
+        ]
+        for path in candidates:
+            if path.exists() and os.access(path, os.X_OK):
+                return str(path)
             
         return "rclone"
 
@@ -48,13 +63,13 @@ class RcloneManager:
             return self._explicit_binary
 
         current = self.find_rclone_binary()
-        if current != "rclone" and os_is_executable(Path(current)):
+        if current != "rclone" and os.access(current, os.X_OK):
             self._binary = current
             return current
 
         dest = self.get_local_binary_path()
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if dest.exists() and os_is_executable(dest):
+        if dest.exists() and os.access(dest, os.X_OK):
             self._binary = str(dest)
             return str(dest)
 
@@ -67,8 +82,7 @@ class RcloneManager:
             target_name = "rclone"
 
         req = urllib.request.urlopen(url, timeout=60)
-        zip_data = req.read()
-        z = zipfile.ZipFile(io.BytesIO(zip_data))
+        z = zipfile.ZipFile(io.BytesIO(req.read()))
         for member in z.namelist():
             if member.endswith(f"/{target_name}") or member == target_name:
                 dest.write_bytes(z.read(member))
@@ -147,7 +161,3 @@ class RcloneManager:
         if resync:
             cmd.append("--resync")
         return cmd
-
-def os_is_executable(path: Path) -> bool:
-    import os
-    return os.access(path, os.X_OK)

@@ -1,9 +1,9 @@
 """Tests for filter rules generator."""
 from pathlib import Path
-from src.core.filter_rules import get_default_filter_rules, write_filters_file
+from src.core.rclone_manager import DEFAULT_FILTER_RULES, write_filters_file
 
 def test_default_rules_contain_git_and_obsidian_exclusions():
-    rules = get_default_filter_rules()
+    rules = DEFAULT_FILTER_RULES
     assert "- .git/**" in rules
     assert "- .gitignore" in rules
     assert "- .obsidian/workspace.json" in rules

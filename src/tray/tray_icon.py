@@ -7,14 +7,6 @@ from src.core.sync_worker import SyncWorker, SyncStatus
 
 logger = logging.getLogger(__name__)
 
-COLOR_MAP = {
-    SyncStatus.IDLE: "#4CAF50",      # Verde
-    SyncStatus.SUCCESS: "#4CAF50",   # Verde
-    SyncStatus.SYNCING: "#2196F3",   # Azul
-    SyncStatus.PAUSED: "#FFC107",    # Amarillo
-    SyncStatus.ERROR: "#F44336",     # Rojo
-}
-
 class TrayManager:
     def __init__(
         self,
@@ -32,9 +24,7 @@ class TrayManager:
     def create_icon_image(color_hex: str) -> Image.Image:
         image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
-        # Círculo base con color del estado
         draw.ellipse((4, 4, 60, 60), fill=color_hex, outline="#FFFFFF", width=3)
-        # 'O' de Obsidian en el centro
         draw.ellipse((20, 20, 44, 44), fill="#FFFFFF")
         return image
 
@@ -61,15 +51,14 @@ class TrayManager:
     def update_status(self, status: SyncStatus, msg: str):
         self._status_text = msg
         if self.icon:
-            color = COLOR_MAP.get(status, "#4CAF50")
             try:
-                self.icon.icon = self.create_icon_image(color)
+                self.icon.icon = self.create_icon_image(status.color)
                 self.icon.title = f"Obsidian GDrive Sync: {msg}"
             except Exception as e:
                 logger.debug(f"Error updating tray icon: {e}")
 
     def start(self):
-        img = self.create_icon_image(COLOR_MAP[SyncStatus.IDLE])
+        img = self.create_icon_image(SyncStatus.IDLE.color)
         self.icon = pystray.Icon("obsidian_sync", img, "Obsidian GDrive Sync", menu=self._build_menu())
         threading.Thread(target=self.icon.run, daemon=True).start()
 
