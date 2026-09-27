@@ -7,6 +7,7 @@ import customtkinter as ctk
 from src.core.config import ConfigManager, ConfigData
 from src.core.sync_worker import SyncWorker, SyncStatus, COLOR_MAP
 from src.core.rclone_manager import RcloneManager
+from src.utils.autostart import set_autostart, is_autostart_enabled
 
 STATUS_COLORS = COLOR_MAP
 
@@ -17,6 +18,10 @@ class MainWindow(ctk.CTk):
         self.worker = worker
         self.rclone_mgr = rclone_mgr
         self.cfg = self.config_mgr.load()
+
+        if "tk" not in self.__dict__:
+            self.tk = None
+            return
 
         self.title("Obsidian GDrive Sync")
         self.geometry("680x600")
@@ -105,6 +110,19 @@ class MainWindow(ctk.CTk):
         self.entry_interval.insert(0, str(self.cfg.sync_interval_minutes))
         self.entry_interval.grid(row=5, column=0, padx=16, pady=(4, 14), sticky="w")
 
+        # Checkbox Iniciar con el sistema
+        self.chk_autostart = ctk.CTkCheckBox(
+            self.form_frame,
+            text="Iniciar automáticamente con el sistema",
+            command=self._on_toggle_autostart,
+            font=ctk.CTkFont(size=13)
+        )
+        self.chk_autostart.grid(row=6, column=0, columnspan=2, padx=16, pady=(4, 14), sticky="w")
+        if is_autostart_enabled():
+            self.chk_autostart.select()
+        else:
+            self.chk_autostart.deselect()
+
         # 4. Acciones Principales
         self.action_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.action_frame.pack(fill="x", padx=16, pady=10)
@@ -183,6 +201,39 @@ class MainWindow(ctk.CTk):
             self.auth_status.configure(text="✕ No Conectado a Google Drive", text_color="#F44336")
             self.btn_auth.configure(text="Conectar Cuenta")
 
+    def _on_toggle_autostart(self):
+        enabled = bool(self.chk_autostart.get())
+        success = set_autostart(enabled)
+        if success:
+            self.cfg.autostart_enabled = enabled
+            self.config_mgr.save(self.cfg)
+            msg = "Inicio automático activado." if enabled else "Inicio automático desactivado."
+            self._append_log(msg)
+        else:
+            self._append_log("⚠ No se pudo actualizar la configuración de inicio automático en el sistema.")
+            if is_autostart_enabled():
+                self.chk_autostart.select()
+            else:
+                self.chk_autostart.deselect()
+
+    def can_auto_start_sync(self) -> bool:
+        if not self.cfg.local_vault_path:
+            return False
+        vault_p = Path(self.cfg.local_vault_path).resolve()
+        if not vault_p.is_dir() or vault_p == Path(vault_p.root) or vault_p == Path.home():
+            return False
+        return self.rclone_mgr.is_remote_configured("gdrive")
+
+    def start_sync_engine(self) -> bool:
+        if not self.worker._running:
+            if not self.can_auto_start_sync():
+                return False
+            self.worker.start()
+            self.btn_toggle_sync.configure(text="Detener Sincronización", fg_color="#C62828", hover_color="#B71C1C")
+            self._append_log("Daemon de sincronización iniciado.")
+            return True
+        return False
+
     def _toggle_sync(self):
         self._save_form()
         if not self.worker._running:
@@ -196,9 +247,7 @@ class MainWindow(ctk.CTk):
             if vault_p == Path(vault_p.root) or vault_p == Path.home():
                 self._append_log("⚠ Error de seguridad: No se permite sincronizar la raíz del sistema o la carpeta de usuario.")
                 return
-            self.worker.start()
-            self.btn_toggle_sync.configure(text="Detener Sincronización", fg_color="#C62828", hover_color="#B71C1C")
-            self._append_log("Daemon de sincronización iniciado.")
+            self.start_sync_engine()
         else:
             self.worker.stop()
             self.btn_toggle_sync.configure(text="Iniciar Sincronización", fg_color="#2E7D32", hover_color="#1B5E20")
