@@ -20,6 +20,9 @@ class MainWindow(ctk.CTk):
         self.cfg = self.config_mgr.load()
         self.chk_realtime = None
         self.entry_debounce = None
+        self.quota_bar = None
+        self.quota_label = None
+        self.quota_container = None
 
         if "tk" not in self.__dict__:
             self.tk = None
@@ -51,21 +54,37 @@ class MainWindow(ctk.CTk):
         # 2. Conexión Google Drive
         self.auth_frame = ctk.CTkFrame(self, corner_radius=8)
         self.auth_frame.pack(fill="x", padx=16, pady=8)
-        
+
+        self.auth_top_row = ctk.CTkFrame(self.auth_frame, fg_color="transparent")
+        self.auth_top_row.pack(fill="x", padx=16, pady=(12, 6))
+
         self.auth_status = ctk.CTkLabel(
-            self.auth_frame,
+            self.auth_top_row,
             text="Google Drive: Comprobando conexión...",
             font=ctk.CTkFont(size=13)
         )
-        self.auth_status.pack(side="left", padx=16, pady=12)
-        
+        self.auth_status.pack(side="left")
+
         self.btn_auth = ctk.CTkButton(
-            self.auth_frame,
+            self.auth_top_row,
             text="Conectar Cuenta",
             command=self._handle_auth,
             width=140
         )
-        self.btn_auth.pack(side="right", padx=16, pady=12)
+        self.btn_auth.pack(side="right")
+
+        # Contenedor de Cuota
+        self.quota_container = ctk.CTkFrame(self.auth_frame, fg_color="transparent")
+        self.quota_label = ctk.CTkLabel(
+            self.quota_container,
+            text="",
+            font=ctk.CTkFont(size=11),
+            text_color="#B0BEC5"
+        )
+        self.quota_label.pack(anchor="w")
+        self.quota_bar = ctk.CTkProgressBar(self.quota_container, height=6)
+        self.quota_bar.set(0)
+        self.quota_bar.pack(fill="x", pady=(2, 10))
 
         # 3. Formulario de Configuración
         self.form_frame = ctk.CTkFrame(self, corner_radius=8)
@@ -248,9 +267,52 @@ class MainWindow(ctk.CTk):
         if is_auth:
             self.auth_status.configure(text="✓ Conectado a Google Drive", text_color="#4CAF50")
             self.btn_auth.configure(text="Re-conectar")
+            self._refresh_storage_quota()
         else:
             self.auth_status.configure(text="✕ No Conectado a Google Drive", text_color="#F44336")
             self.btn_auth.configure(text="Conectar Cuenta")
+            self._apply_quota_data(None)
+
+    def _refresh_storage_quota(self):
+        def _fetch():
+            quota = self.rclone_mgr.get_storage_quota("gdrive")
+            try:
+                if getattr(self, "tk", None):
+                    self.after(0, lambda: self._apply_quota_data(quota))
+            except Exception:
+                pass
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    def _apply_quota_data(self, quota: dict | None):
+        if not hasattr(self, "quota_bar") or not hasattr(self, "quota_label"):
+            return
+        if not quota:
+            if getattr(self, "quota_container", None) and hasattr(self.quota_container, "pack_forget"):
+                self.quota_container.pack_forget()
+            return
+
+        percent = quota.get("percent", 0.0)
+        used_s = quota.get("used_str", "")
+        tot_s = quota.get("total_str", "")
+        pct_s = quota.get("percent_str", "")
+
+        if percent > 0.90:
+            color = "#F44336"
+        elif percent > 0.75:
+            color = "#FFC107"
+        else:
+            color = "#4CAF50"
+
+        if getattr(self, "quota_bar", None) and hasattr(self.quota_bar, "set"):
+            self.quota_bar.set(percent)
+            if hasattr(self.quota_bar, "configure"):
+                self.quota_bar.configure(progress_color=color)
+        if getattr(self, "quota_label", None) and hasattr(self.quota_label, "configure"):
+            self.quota_label.configure(
+                text=f"Almacenamiento: {used_s} / {tot_s} ({pct_s})"
+            )
+        if getattr(self, "quota_container", None) and hasattr(self.quota_container, "pack"):
+            self.quota_container.pack(fill="x", padx=16, pady=(0, 10))
 
     def _on_toggle_autostart(self):
         enabled = bool(self.chk_autostart.get())

@@ -371,6 +371,39 @@ def test_save_form_hot_reloads_watcher(tmp_path):
             created_watcher.start.assert_called_once_with(str(vault))
             assert mock_worker.watcher == created_watcher
 
+def test_gui_storage_quota_display():
+    from unittest.mock import patch, MagicMock
+    from src.gui.app_window import MainWindow
+
+    mock_cfg_mgr = MagicMock()
+    mock_cfg_mgr.load.return_value = ConfigData()
+    mock_rclone = MagicMock()
+    mock_rclone.is_remote_configured.return_value = True
+    mock_rclone.get_storage_quota.return_value = {
+        "total": 15 * 1024**3,
+        "used": 12 * 1024**3,
+        "free": 3 * 1024**3,
+        "total_str": "15.0 GB",
+        "used_str": "12.0 GB",
+        "free_str": "3.0 GB",
+        "percent": 0.8,
+        "percent_str": "80.0%",
+    }
+
+    with patch("customtkinter.CTk.__init__", return_value=None):
+        win = MainWindow(config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=mock_rclone)
+        assert hasattr(win, "quota_bar")
+        assert hasattr(win, "quota_label")
+        win.quota_bar = MagicMock()
+        win.quota_label = MagicMock()
+        win.quota_container = MagicMock()
+        win._apply_quota_data(mock_rclone.get_storage_quota.return_value)
+        win.quota_bar.set.assert_called_once_with(0.8)
+        win.quota_label.configure.assert_called_once()
+        args, kwargs = win.quota_label.configure.call_args
+        text = kwargs.get("text", "")
+        assert "12.0 GB" in text and "80.0%" in text
+
 
 
 
