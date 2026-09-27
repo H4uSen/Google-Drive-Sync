@@ -41,3 +41,15 @@ def test_corrupt_config_fallback(tmp_path):
     cfg = manager.load()
     assert cfg.sync_interval_minutes == 2
     assert (tmp_path / "config.json.bak").exists()
+
+def test_config_file_permissions(tmp_path):
+    import sys
+    import stat
+    if sys.platform.startswith("win"):
+        return
+    config_file = tmp_path / "config.json"
+    manager = ConfigManager(config_file=config_file)
+    manager.save(ConfigData())
+    mode = stat.S_IMODE(config_file.stat().st_mode)
+    assert mode == 0o600
+

@@ -5,10 +5,16 @@ from src.core.rclone_manager import DEFAULT_FILTER_RULES, write_filters_file
 def test_default_rules_contain_git_and_obsidian_exclusions():
     rules = DEFAULT_FILTER_RULES
     assert "- .git/**" in rules
+    assert "- .git" in rules
     assert "- .gitignore" in rules
+    assert "- .git-credentials" in rules
     assert "- .obsidian/workspace.json" in rules
     assert "- .obsidian/workspace-mobile.json" in rules
     assert "- .obsidian/cache/**" in rules
+    assert "- .obsidian/plugins/obsidian-git/data.json" in rules
+    assert "- .env*" in rules
+    assert "- *.key" in rules
+    assert "- *.pem" in rules
     assert "+ *" in rules
 
 def test_write_filters_file(tmp_path):

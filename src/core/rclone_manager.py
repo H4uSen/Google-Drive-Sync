@@ -12,12 +12,33 @@ from src.utils.paths import get_filters_file_path, get_app_dir
 
 logger = logging.getLogger(__name__)
 
+def sanitize_remote_folder(remote_folder: str) -> str:
+    clean = remote_folder.strip().strip("/\\").replace("\\", "/")
+    parts = [p for p in clean.split("/") if p]
+    if not clean or clean == "." or ".." in parts:
+        raise ValueError("Carpeta remota inválida: no puede ser vacía, raíz o contener '..'")
+    return clean
+
+def validate_local_path(local_path: str) -> Path:
+    if not local_path or not str(local_path).strip():
+        raise ValueError("Ruta local no configurada")
+    resolved = Path(str(local_path).strip()).resolve()
+    if resolved == Path(resolved.root):
+        raise ValueError("Ruta local inválida: no se permite sincronizar la raíz del sistema")
+    return resolved
+
 DEFAULT_FILTER_RULES = [
     "- .git/**",
+    "- .git",
     "- .gitignore",
+    "- .git-credentials",
     "- .obsidian/workspace.json",
     "- .obsidian/workspace-mobile.json",
     "- .obsidian/cache/**",
+    "- .obsidian/plugins/obsidian-git/data.json",
+    "- .env*",
+    "- *.key",
+    "- *.pem",
     "- *.tmp",
     "+ *",
 ]
@@ -86,7 +107,7 @@ class RcloneManager:
         for member in z.namelist():
             if member.endswith(f"/{target_name}") or member == target_name:
                 dest.write_bytes(z.read(member))
-                dest.chmod(dest.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+                dest.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
                 logger.info(f"Rclone instalado en {dest}")
                 self._binary = str(dest)
                 return str(dest)
@@ -110,7 +131,7 @@ class RcloneManager:
 
     def ensure_remote_dir(self, remote_folder: str, remote_name: str = "gdrive") -> bool:
         bin_cmd = self.ensure_rclone_binary()
-        clean_remote = remote_folder.strip().strip("/")
+        clean_remote = sanitize_remote_folder(remote_folder)
         remote_target = f"{remote_name}:{clean_remote}"
         try:
             subprocess.run([bin_cmd, "mkdir", remote_target], capture_output=True, check=True)
@@ -133,11 +154,13 @@ class RcloneManager:
         filters_file: Path | None = None,
     ) -> list[str]:
         bin_cmd = self.ensure_rclone_binary()
+        validate_local_path(local_path)
+        clean_remote = sanitize_remote_folder(remote_folder)
+
         target_filters = filters_file or get_filters_file_path()
         if not target_filters.exists():
             write_filters_file(target_filters)
 
-        clean_remote = remote_folder.strip().strip("/")
         remote_target = f"gdrive:{clean_remote}"
         cmd = [
             bin_cmd,

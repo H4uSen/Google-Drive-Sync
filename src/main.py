@@ -13,9 +13,18 @@ logger = setup_logger("obsidian_sync")
 
 def acquire_single_instance_lock() -> bool:
     lock_file = get_app_dir() / "app.lock"
+
+    def _write_pid_atomic() -> bool:
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+        fd = os.open(lock_file, flags, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(str(os.getpid()))
+        return True
+
     try:
-        if lock_file.exists():
-            # Comprobar si el proceso anterior sigue vivo
+        return _write_pid_atomic()
+    except FileExistsError:
+        try:
             pid_str = lock_file.read_text(encoding="utf-8").strip()
             if pid_str.isdigit():
                 pid = int(pid_str)
@@ -24,12 +33,15 @@ def acquire_single_instance_lock() -> bool:
                     logger.warning(f"Otra instancia de la aplicación ya está en ejecución (PID: {pid}).")
                     return False
                 except (OSError, ProcessLookupError):
-                    pass # Proceso anterior murió
-        lock_file.write_text(str(os.getpid()), encoding="utf-8")
-        return True
+                    pass
+            lock_file.unlink(missing_ok=True)
+            return _write_pid_atomic()
+        except Exception as stale_err:
+            logger.error(f"Error gestionando archivo de bloqueo obsoleto: {stale_err}")
+            return False
     except Exception as e:
         logger.error(f"Error gestionando archivo de bloqueo: {e}")
-        return True
+        return False
 
 def release_single_instance_lock():
     try:

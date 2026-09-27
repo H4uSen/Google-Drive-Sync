@@ -10,7 +10,12 @@ def get_app_dir() -> Path:
         base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
         app_dir = base / "obsidian-gdrive-sync"
     
-    app_dir.mkdir(parents=True, exist_ok=True)
+    app_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not sys.platform.startswith("win"):
+        try:
+            os.chmod(app_dir, 0o700)
+        except OSError:
+            pass
     return app_dir
 
 def get_config_file_path() -> Path:

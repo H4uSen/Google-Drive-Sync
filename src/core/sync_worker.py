@@ -1,4 +1,5 @@
 from enum import Enum
+from pathlib import Path
 import threading
 import time
 import subprocess
@@ -89,6 +90,11 @@ class SyncWorker:
             self._notify(SyncStatus.ERROR, "Ruta de vault no configurada")
             return False
 
+        vault_path = Path(self.config.local_vault_path.strip()).resolve()
+        if not vault_path.is_dir():
+            self._notify(SyncStatus.ERROR, f"Ruta de vault inválida o no existe: {self.config.local_vault_path}")
+            return False
+
         if not self._sync_lock.acquire(blocking=False):
             return False
 
@@ -103,24 +109,26 @@ class SyncWorker:
                 resync=resync,
             )
             try:
-                res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                res = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=900)
             except subprocess.CalledProcessError as sub_err:
                 err_text = sub_err.stderr or sub_err.stdout or ""
                 if "Must run --resync to recover" in err_text:
-                    logger.info("Resincronización requerida por rclone. Reintentando con --resync...")
-                    recovery_cmd = self.rclone.build_bisync_command(
-                        self.config.local_vault_path,
-                        self.config.remote_folder_name,
-                        resync=True,
+                    logger.warning("Rclone abortó por guardas de seguridad (posible borrado masivo o desincronización). No se ejecutará auto-resync.")
+                    self._notify(
+                        SyncStatus.ERROR,
+                        "Guardas de seguridad activadas: Se requiere verificación manual antes de cualquier resincronización."
                     )
-                    res = subprocess.run(recovery_cmd, capture_output=True, text=True, check=True)
-                else:
-                    raise sub_err
+                    return False
+                raise sub_err
 
             self.config.first_sync_done = True
             self.last_sync_time = time.strftime("%H:%M:%S")
             self._notify(SyncStatus.SUCCESS, f"Sincronizado con éxito ({self.last_sync_time})")
             return True
+        except subprocess.TimeoutExpired as te:
+            logger.error(f"Sincronización cancelada por exceso de tiempo (timeout de 900s): {te}")
+            self._notify(SyncStatus.ERROR, "Tiempo de espera agotado al sincronizar con Google Drive")
+            return False
         except subprocess.CalledProcessError as e:
             err_msg = e.stderr or e.stdout or "Error en proceso rclone"
             logger.error(f"Rclone error ({e.returncode}): {err_msg}")

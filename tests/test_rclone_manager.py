@@ -1,5 +1,6 @@
 """Tests for RcloneManager."""
 from pathlib import Path
+import pytest
 from src.core.rclone_manager import RcloneManager
 
 def test_build_bisync_command_basic(tmp_path):
@@ -43,3 +44,18 @@ def test_get_auth_command():
     mgr = RcloneManager(rclone_binary="/usr/bin/rclone")
     cmd = mgr.get_auth_command("gdrive")
     assert cmd == ["/usr/bin/rclone", "config", "create", "gdrive", "drive", "config_is_local=true", "scope=drive"]
+
+def test_build_bisync_rejects_empty_or_traversal_remote(tmp_path):
+    filter_file = tmp_path / "filters.txt"
+    mgr = RcloneManager(rclone_binary="/usr/bin/rclone")
+    invalid_remotes = ["", "/", "  ", ".", "..", "../notes", "/nested/../"]
+    for remote in invalid_remotes:
+        with pytest.raises(ValueError, match="inválida"):
+            mgr.build_bisync_command("/home/user/vault", remote, filters_file=filter_file)
+
+def test_build_bisync_rejects_system_root_local(tmp_path):
+    filter_file = tmp_path / "filters.txt"
+    mgr = RcloneManager(rclone_binary="/usr/bin/rclone")
+    with pytest.raises(ValueError, match="raíz"):
+        mgr.build_bisync_command("/", "ObsidianVault", filters_file=filter_file)
+

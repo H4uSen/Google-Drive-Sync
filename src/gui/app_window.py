@@ -1,6 +1,7 @@
 import sys
 import threading
 import subprocess
+from pathlib import Path
 from tkinter import filedialog
 import customtkinter as ctk
 from src.core.config import ConfigManager, ConfigData
@@ -148,7 +149,13 @@ class MainWindow(ctk.CTk):
         except ValueError:
             interval = 2
         self.cfg.local_vault_path = self.entry_local.get().strip()
-        self.cfg.remote_folder_name = self.entry_remote.get().strip() or "ObsidianVault"
+
+        raw_remote = self.entry_remote.get().strip().strip("/\\").replace("\\", "/")
+        parts = [p for p in raw_remote.split("/") if p]
+        if not raw_remote or raw_remote == "." or ".." in parts:
+            raw_remote = "ObsidianVault"
+        self.cfg.remote_folder_name = raw_remote
+
         self.cfg.sync_interval_minutes = max(1, interval)
         self.config_mgr.save(self.cfg)
         self.worker.config = self.cfg
@@ -158,7 +165,7 @@ class MainWindow(ctk.CTk):
             self._append_log("Iniciando asistente de conexión con Google Drive en el navegador...")
             cmd = self.rclone_mgr.get_auth_command()
             try:
-                subprocess.run(cmd, check=True)
+                subprocess.run(cmd, stdin=subprocess.DEVNULL, timeout=300, check=True)
                 self.after(0, self._check_auth_status)
                 self._append_log("¡Cuenta de Google Drive autorizada con éxito!")
             except Exception as e:
@@ -181,6 +188,13 @@ class MainWindow(ctk.CTk):
         if not self.worker._running:
             if not self.cfg.local_vault_path:
                 self._append_log("⚠ Advertencia: Selecciona la ruta local de tu Vault de Obsidian antes de iniciar.")
+                return
+            vault_p = Path(self.cfg.local_vault_path).resolve()
+            if not vault_p.is_dir():
+                self._append_log(f"⚠ Error: La carpeta del Vault no existe o no es accesible: {self.cfg.local_vault_path}")
+                return
+            if vault_p == Path(vault_p.root) or vault_p == Path.home():
+                self._append_log("⚠ Error de seguridad: No se permite sincronizar la raíz del sistema o la carpeta de usuario.")
                 return
             self.worker.start()
             self.btn_toggle_sync.configure(text="Detener Sincronización", fg_color="#C62828", hover_color="#B71C1C")

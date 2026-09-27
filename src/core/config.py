@@ -3,6 +3,8 @@ from pathlib import Path
 import json
 import shutil
 import logging
+import sys
+import os
 from src.utils.paths import get_config_file_path
 
 logger = logging.getLogger(__name__)
@@ -55,4 +57,9 @@ class ConfigManager:
         temp_file = self.config_file.with_suffix(".tmp")
         with open(temp_file, "w", encoding="utf-8") as f:
             json.dump(asdict(config), f, indent=2, ensure_ascii=False)
+        if not sys.platform.startswith("win"):
+            try:
+                os.chmod(temp_file, 0o600)
+            except OSError:
+                pass
         temp_file.replace(self.config_file)
