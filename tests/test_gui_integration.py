@@ -535,3 +535,39 @@ class TestHeadlessCompatibility:
         assert format_byte_size(1024 * 1024 * 5) == "5.0 MB"
         assert format_byte_size(1024 * 1024 * 1024 * 2) == "2.00 GB"
         assert format_byte_size("invalid") == "0 B"
+
+    def test_execute_auth_process_success(self, test_env):
+        with patch("customtkinter.CTk.__init__", return_value=None):
+            win = MainWindow(
+                config_manager=test_env["cfg_mgr"],
+                worker=test_env["worker"],
+                rclone_mgr=test_env["rclone_mock"],
+            )
+            fake_stdout = [
+                "NOTICE: If your browser doesn't open automatically go to the following link: http://127.0.0.1:53682/auth?state=xyz123\n",
+                "NOTICE: Waiting for code...\n",
+                "NOTICE: Got code\n",
+            ]
+            mock_proc = MagicMock()
+            mock_proc.stdout.readline.side_effect = fake_stdout + [""]
+            mock_proc.wait.return_value = 0
+
+            with patch("subprocess.Popen", return_value=mock_proc), patch("webbrowser.open") as mock_browser:
+                result = win._execute_auth_process(["rclone", "config", "reconnect", "gdrive:", "--auto-confirm"])
+                assert result is True
+                mock_browser.assert_called_once_with("http://127.0.0.1:53682/auth?state=xyz123")
+
+    def test_execute_auth_process_handles_failure(self, test_env):
+        with patch("customtkinter.CTk.__init__", return_value=None):
+            win = MainWindow(
+                config_manager=test_env["cfg_mgr"],
+                worker=test_env["worker"],
+                rclone_mgr=test_env["rclone_mock"],
+            )
+            mock_proc = MagicMock()
+            mock_proc.stdout.readline.side_effect = ["Error: token expired\n", ""]
+            mock_proc.wait.return_value = 1
+
+            with patch("subprocess.Popen", return_value=mock_proc):
+                result = win._execute_auth_process(["rclone", "config", "reconnect", "gdrive:", "--auto-confirm"])
+                assert result is False

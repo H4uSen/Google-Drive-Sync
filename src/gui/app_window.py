@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import os
 import sys
+import re
+import webbrowser
 import threading
 import subprocess
 from pathlib import Path
@@ -1363,17 +1365,75 @@ class MainWindow(ctk.CTk):
             elif self.worker.watcher:
                 self.worker.watcher.handler.debounce_seconds = self.cfg.debounce_delay_seconds
 
+    def _execute_auth_process(self, cmd: list[str]) -> bool:
+        """Execute rclone auth command, streaming output and opening browser automatically."""
+        try:
+            logger.info(f"Ejecutando comando de autenticación: {' '.join(cmd)}")
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            opened_browser = False
+            for line in iter(proc.stdout.readline, ""):
+                clean_line = line.strip()
+                if not clean_line:
+                    continue
+                logger.info(f"[rclone-auth] {clean_line}")
+                # Detect auth link and assist opening browser if needed
+                if "http://127.0.0.1:53682/auth" in clean_line or "accounts.google.com/o/oauth2" in clean_line:
+                    url_match = re.search(r"(https?://\S+)", clean_line)
+                    if url_match:
+                        url = url_match.group(1).rstrip(".,;")
+                        self._append_log(f"Enlace de autorización: {url}")
+                        if not opened_browser:
+                            try:
+                                webbrowser.open(url)
+                                opened_browser = True
+                            except Exception as browser_err:
+                                logger.debug(f"No se pudo abrir el navegador automáticamente: {browser_err}")
+                elif "Waiting for code" in clean_line:
+                    self._append_log("Esperando confirmación en el navegador...")
+                elif "Got code" in clean_line:
+                    self._append_log("Código de autorización recibido correctamente.")
+
+            proc.stdout.close()
+            retcode = proc.wait(timeout=300)
+            return retcode == 0
+        except Exception as err:
+            logger.error(f"Error en _execute_auth_process: {err}")
+            self._append_log(f"Error ejecutando rclone auth: {err}")
+            return False
+
     def _handle_auth(self) -> None:
         """Trigger interactive browser authentication for Google Drive."""
+        if hasattr(self, "btn_auth") and self.btn_auth:
+            try:
+                self.btn_auth.configure(state="disabled", text="Conectando...")
+            except Exception:
+                pass
+
         def _run_auth():
             self._append_log("Iniciando asistente de conexión con Google Drive en el navegador...")
             cmd = self.rclone_mgr.get_auth_command()
             try:
-                subprocess.run(cmd, stdin=subprocess.DEVNULL, timeout=300, check=True)
-                self._run_on_ui_thread(self._check_auth_status)
-                self._append_log("¡Cuenta de Google Drive autorizada con éxito!")
+                success = self._execute_auth_process(cmd)
+                # If reconnect failed, attempt fresh create as fallback
+                if not success and "reconnect" in cmd:
+                    self._append_log("Reconexión no completada. Reintentando con configuración completa...")
+                    fallback_cmd = self.rclone_mgr.get_create_command()
+                    success = self._execute_auth_process(fallback_cmd)
+
+                if success:
+                    self._append_log("¡Cuenta de Google Drive autorizada con éxito!")
+                else:
+                    self._append_log("No se pudo completar la autorización con Google Drive.")
             except Exception as e:
                 self._append_log(f"Error durante la autorización: {e}")
+            finally:
                 self._run_on_ui_thread(self._check_auth_status)
 
         threading.Thread(target=_run_auth, daemon=True).start()

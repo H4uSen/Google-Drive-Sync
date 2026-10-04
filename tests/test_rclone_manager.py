@@ -44,10 +44,26 @@ def test_build_bisync_command_with_spaces_in_path(tmp_path):
     assert local_with_spaces in cmd
     assert "gdrive:My Remote Vault" in cmd
 
-def test_get_auth_command():
+def test_get_auth_command_not_configured():
     mgr = RcloneManager(rclone_binary="/usr/bin/rclone")
     cmd = mgr.get_auth_command("gdrive")
-    assert cmd == ["/usr/bin/rclone", "config", "create", "gdrive", "drive", "config_is_local=true", "scope=drive"]
+    assert cmd == [
+        "/usr/bin/rclone",
+        "config",
+        "create",
+        "gdrive",
+        "drive",
+        "config_is_local=true",
+        "scope=drive",
+        "config_shared_client_id=true",
+        "--auto-confirm",
+    ]
+
+def test_get_auth_command_reconnect(monkeypatch):
+    mgr = RcloneManager(rclone_binary="/usr/bin/rclone")
+    monkeypatch.setattr(mgr, "is_remote_configured", lambda name: True)
+    cmd = mgr.get_auth_command("gdrive")
+    assert cmd == ["/usr/bin/rclone", "config", "reconnect", "gdrive:", "--auto-confirm"]
 
 def test_build_bisync_rejects_empty_or_traversal_remote(tmp_path):
     filter_file = tmp_path / "filters.txt"

@@ -141,11 +141,25 @@ class RcloneManager:
             logger.debug(f"Error ensuring remote dir {remote_target}: {e}")
             return False
 
+    def get_create_command(self, remote_name: str = "gdrive") -> list[str]:
+        bin_cmd = self.ensure_rclone_binary()
+        return [
+            bin_cmd,
+            "config",
+            "create",
+            remote_name,
+            "drive",
+            "config_is_local=true",
+            "scope=drive",
+            "config_shared_client_id=true",
+            "--auto-confirm",
+        ]
+
     def get_auth_command(self, remote_name: str = "gdrive") -> list[str]:
         bin_cmd = self.ensure_rclone_binary()
         if self.is_remote_configured(remote_name):
-            return [bin_cmd, "config", "reconnect", f"{remote_name}:"]
-        return [bin_cmd, "config", "create", remote_name, "drive", "config_is_local=true", "scope=drive"]
+            return [bin_cmd, "config", "reconnect", f"{remote_name}:", "--auto-confirm"]
+        return self.get_create_command(remote_name)
 
     def build_bisync_command(
         self,
