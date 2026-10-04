@@ -83,6 +83,10 @@ class ConfigData:
                 return v
         return self.vaults[0]
 
+    @property
+    def active_vault(self) -> VaultProfile:
+        return self.get_active_vault()
+
     def set_active_vault(self, vault_id: str) -> bool:
         target = next((v for v in self.vaults if v.id == vault_id), None)
         if not target:

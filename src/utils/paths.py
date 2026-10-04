@@ -26,3 +26,7 @@ def get_log_file_path() -> Path:
 
 def get_filters_file_path() -> Path:
     return get_app_dir() / "filters.txt"
+
+def get_history_file_path() -> Path:
+    return get_app_dir() / "history.json"
+

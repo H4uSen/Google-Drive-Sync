@@ -19,6 +19,10 @@ def test_build_bisync_command_basic(tmp_path):
     assert "pathname" in cmd
     assert "--tpslimit" in cmd
     assert "8" in cmd
+    assert "--max-lock" in cmd
+    assert "15m" in cmd
+    assert "--color" in cmd
+    assert "never" in cmd
     assert "--resync" not in cmd
 
 def test_build_bisync_command_resync(tmp_path):

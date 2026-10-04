@@ -66,6 +66,17 @@ def main():
         app.after(0, app.deiconify)
         app.after(0, app.lift)
 
+    def on_open_logs():
+        def _show_logs():
+            app.deiconify()
+            app.lift()
+            if hasattr(app, "tabview") and app.tabview:
+                try:
+                    app.tabview.set("Diagnósticos")
+                except Exception:
+                    pass
+        app.after(0, _show_logs)
+
     def on_exit():
         logger.info("Deteniendo Obsidian GDrive Sync...")
         worker.stop()
@@ -73,7 +84,7 @@ def main():
         release_single_instance_lock()
         app.after(0, app.quit)
 
-    tray = TrayManager(worker=worker, on_open_gui=on_open_gui, on_exit=on_exit)
+    tray = TrayManager(worker=worker, on_open_gui=on_open_gui, on_exit=on_exit, on_open_logs=on_open_logs)
     worker.register_listener(tray.update_status)
 
     try:
