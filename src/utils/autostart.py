@@ -36,6 +36,8 @@ def get_linux_desktop_file_path() -> Path:
 
 def get_autostart_command() -> str:
     exe = sys.executable
+    if getattr(sys, "frozen", False):
+        return f'"{exe}" --minimized'
     if sys.platform.startswith("win"):
         # Buscar pythonw.exe para evitar ventana de consola negra
         pythonw = Path(exe).with_name("pythonw.exe")
@@ -47,7 +49,10 @@ def get_autostart_command() -> str:
 def set_autostart_linux(enabled: bool) -> bool:
     desktop_file = get_linux_desktop_file_path()
     if enabled:
-        project_root = get_project_root()
+        if getattr(sys, "frozen", False):
+            project_root = Path(sys.executable).parent
+        else:
+            project_root = get_project_root()
         cmd = get_autostart_command()
         content = (
             "[Desktop Entry]\n"

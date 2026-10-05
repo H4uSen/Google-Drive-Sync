@@ -20,6 +20,12 @@ def test_linux_autostart_command_format():
     assert "--minimized" in cmd
     assert "src.main" in cmd
 
+def test_frozen_binary_autostart_command(monkeypatch):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", "/usr/bin/obsidian-gdrive-sync")
+    cmd = get_autostart_command()
+    assert cmd == '"/usr/bin/obsidian-gdrive-sync" --minimized'
+
 def test_linux_set_autostart_lifecycle(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "platform", "linux")
     fake_autostart = tmp_path / "autostart"
