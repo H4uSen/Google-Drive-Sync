@@ -112,6 +112,15 @@ def test_flat_only_file_becomes_the_first_vault(tmp_path):
     assert cfg.autostart_enabled is True
 
 
+def test_null_vault_path_in_file_loads_as_empty(tmp_path):
+    config_file = tmp_path / "config.json"
+    write_json(config_file, {"local_vault_path": None, "vaults": None})
+
+    vault = ConfigManager(config_file=config_file).load().active_vault
+
+    assert vault.local_path == ""
+
+
 def test_vault_list_wins_over_flat_keys_in_a_mixed_file(tmp_path):
     config_file = tmp_path / "config.json"
     write_json(config_file, {

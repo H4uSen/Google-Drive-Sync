@@ -24,6 +24,8 @@ class VaultProfile:
     last_sync_status: str = "idle"
 
     def clean(self):
+        if not isinstance(self.local_path, str):
+            self.local_path = ""
         if not isinstance(self.sync_interval_minutes, int) or self.sync_interval_minutes < 1:
             self.sync_interval_minutes = 2
         if not isinstance(self.debounce_delay_seconds, int) or self.debounce_delay_seconds < 1:
