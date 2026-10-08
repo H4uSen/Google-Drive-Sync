@@ -16,6 +16,8 @@ from tests.e2e.conftest import require_feature, require_features
 from src.core.config import ConfigManager, ConfigData, VaultProfile
 from src.core.sync_worker import SyncWorker, SyncStatus, try_recover_stale_lock
 from src.core.rclone_manager import RcloneManager
+from src.core.history_manager import SyncHistoryManager
+from tests.fakes import FakeLauncher, FakeProcess, stub_rclone
 from src.main import acquire_single_instance_lock, release_single_instance_lock
 
 
@@ -54,9 +56,8 @@ def test_e02_deleted_vault_aborts_sync(isolated_env, tmp_path):
     vault = tmp_path / "ephemeral_vault"
     vault.mkdir()
     cfg = ConfigData(local_vault_path=str(vault), remote_folder_name="vault")
-    mock_rclone = MagicMock()
-
-    worker = SyncWorker(config=cfg, rclone_manager=mock_rclone)
+    launcher = FakeLauncher()
+    worker = SyncWorker(config=cfg, rclone_manager=stub_rclone(), launcher=launcher)
 
     # Delete vault directory right before execution
     vault.rmdir()
@@ -66,7 +67,7 @@ def test_e02_deleted_vault_aborts_sync(isolated_env, tmp_path):
     assert success is False
     assert worker.status == SyncStatus.ERROR
     assert "no existe" in worker.last_message.lower() or "inválida" in worker.last_message.lower()
-    mock_rclone.build_bisync_command.assert_not_called()
+    assert launcher.commands == []
 
 
 # ============================================================================
@@ -104,28 +105,20 @@ def test_e04_bisync_safety_trip_forbids_auto_resync(isolated_env, tmp_path):
     vault = tmp_path / "safe_vault"
     vault.mkdir()
     cfg = ConfigData(local_vault_path=str(vault), remote_folder_name="vault", first_sync_done=True)
-    mock_rclone = MagicMock()
-    mock_rclone.build_bisync_command.return_value = ["mock_rclone", "bisync"]
+    launcher = FakeLauncher(FakeProcess(
+        ["Fatal error: Safety trip! Too many deletes (15 > 10). Must run --resync to recover."],
+        returncode=1,
+    ))
+    worker = SyncWorker(config=cfg, rclone_manager=stub_rclone(), launcher=launcher)
 
-    worker = SyncWorker(config=cfg, rclone_manager=mock_rclone)
+    success = worker._execute_sync()
+    assert success is False
+    assert worker.status == SyncStatus.ERROR
+    assert "guardas de seguridad" in worker.last_message.lower()
 
-    with patch("subprocess.run") as mock_run:
-        err = subprocess.CalledProcessError(
-            returncode=1,
-            cmd=["rclone"],
-            stderr="Fatal error: Safety trip! Too many deletes (15 > 10). Must run --resync to recover."
-        )
-        mock_run.side_effect = err
-
-        success = worker._execute_sync()
-        assert success is False
-        assert worker.status == SyncStatus.ERROR
-        assert "guardas de seguridad" in worker.last_message.lower()
-
-        # Critical invariant: must NOT re-call with resync=True
-        for call_args in mock_rclone.build_bisync_command.call_args_list:
-            kwargs = call_args[1] if len(call_args) > 1 else {}
-            assert kwargs.get("resync") is not True, "Must never automatically run --resync on safety trips"
+    # Critical invariant: rclone ran once, and never with --resync
+    assert len(launcher.commands) == 1
+    assert "--resync" not in launcher.commands[0], "Must never automatically run --resync on safety trips"
 
 
 # ============================================================================
@@ -136,21 +129,16 @@ def test_e05_network_outage_error_handling(isolated_env, tmp_path):
     vault = tmp_path / "vault"
     vault.mkdir()
     cfg = ConfigData(local_vault_path=str(vault), remote_folder_name="vault")
-    mock_rclone = MagicMock()
-    mock_rclone.build_bisync_command.return_value = ["mock_rclone"]
+    launcher = FakeLauncher(FakeProcess(
+        ["ERROR : Failed to copy: dial tcp: lookup oauth2.googleapis.com: no such host"],
+        returncode=2,
+    ))
+    worker = SyncWorker(config=cfg, rclone_manager=stub_rclone(), launcher=launcher)
 
-    worker = SyncWorker(config=cfg, rclone_manager=mock_rclone)
-
-    with patch("subprocess.run") as mock_run:
-        mock_run.side_effect = subprocess.CalledProcessError(
-            returncode=2,
-            cmd=["rclone"],
-            stderr="ERROR : Failed to copy: dial tcp: lookup oauth2.googleapis.com: no such host"
-        )
-        success = worker._execute_sync()
-        assert success is False
-        assert worker.status == SyncStatus.ERROR
-        assert "oauth2.googleapis.com" in worker.last_message or "fallo" in worker.last_message.lower()
+    success = worker._execute_sync()
+    assert success is False
+    assert worker.status == SyncStatus.ERROR
+    assert "oauth2.googleapis.com" in worker.last_message
 
 
 # ============================================================================
@@ -192,16 +180,17 @@ def test_e07_large_batch_boundary(isolated_env, sample_vault):
     assert len(files) >= 60
 
     cfg = ConfigData(local_vault_path=str(sample_vault), remote_folder_name="vault")
-    mock_rclone = MagicMock()
-    mock_rclone.build_bisync_command.return_value = ["mock_rclone"]
+    names = [f"Bulk/note_{i:03d}.md" for i in range(60)]
+    launcher = FakeLauncher(FakeProcess(
+        [f"2026/10/07 10:00:00 INFO  : {n}: Copied (new)" for n in names] + ["Bisync successful"]
+    ))
+    history = SyncHistoryManager(sample_vault.parent / "history.json")
+    worker = SyncWorker(config=cfg, rclone_manager=stub_rclone(), history_manager=history, launcher=launcher)
 
-    worker = SyncWorker(config=cfg, rclone_manager=mock_rclone)
-
-    with patch("subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(returncode=0, stdout="Bisync successful", stderr="")
-        success = worker._execute_sync()
-        assert success is True
-        assert worker.status == SyncStatus.SUCCESS
+    success = worker._execute_sync()
+    assert success is True
+    assert worker.status == SyncStatus.SUCCESS
+    assert history.get_recent_runs(1)[0].files_transferred == names
 
 
 # ============================================================================

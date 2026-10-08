@@ -17,6 +17,7 @@ from src.core.config import ConfigManager, ConfigData, VaultProfile
 from src.core.sync_worker import SyncWorker, SyncStatus
 from src.tray.tray_icon import TrayManager
 from src.core.rclone_manager import RcloneManager
+from tests.fakes import FakeLauncher, FakeProcess, stub_rclone
 
 
 # ============================================================================
@@ -41,22 +42,16 @@ def test_s01_first_run_onboarding_workflow(isolated_env, sample_vault):
     assert reloaded_cfg.local_vault_path == str(sample_vault)
 
     # Initial sync execution (resync=True on first run)
-    mock_rclone = MagicMock()
-    mock_rclone.ensure_remote_dir.return_value = True
-    mock_rclone.build_bisync_command.return_value = ["mock_rclone", "bisync", "--resync"]
+    launcher = FakeLauncher(FakeProcess(["Bisync successful"]))
+    worker = SyncWorker(config=reloaded_cfg, rclone_manager=stub_rclone(), launcher=launcher)
 
-    worker = SyncWorker(config=reloaded_cfg, rclone_manager=mock_rclone)
+    success = worker._execute_sync()
+    assert success is True
+    assert worker.status == SyncStatus.SUCCESS
+    assert reloaded_cfg.first_sync_done is True
 
-    with patch("subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(returncode=0, stdout="Bisync successful", stderr="")
-        success = worker._execute_sync()
-        assert success is True
-        assert worker.status == SyncStatus.SUCCESS
-        assert reloaded_cfg.first_sync_done is True
-
-        # Verify resync was requested for the first sync
-        call_kwargs = mock_rclone.build_bisync_command.call_args[1]
-        assert call_kwargs.get("resync") is True
+    # The first sync of a Vault is a Resync
+    assert launcher.commands[0][-1] == "--resync"
 
 
 # ============================================================================
@@ -74,28 +69,29 @@ def test_s02_headless_daemon_workflow(isolated_env, sample_vault):
     )
     cfg_mgr.save(cfg)
 
-    mock_rclone = MagicMock()
-    mock_rclone.build_bisync_command.return_value = ["mock_rclone"]
-
-    worker = SyncWorker(config=cfg, rclone_manager=mock_rclone)
+    launcher = FakeLauncher()
+    worker = SyncWorker(config=cfg, rclone_manager=stub_rclone(), launcher=launcher)
     tray = TrayManager(worker=worker, on_open_gui=MagicMock(), on_exit=MagicMock())
     worker.register_listener(tray.update_status)
 
-    with patch("subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(returncode=0, stdout="Bisync successful", stderr="")
+    def wait_for(cond, timeout=5):
+        deadline = time.time() + timeout
+        while not cond() and time.time() < deadline:
+            time.sleep(0.02)
+        return cond()
 
-        # Start background worker
-        worker.start()
-        assert worker._running is True
-        assert worker.status in (SyncStatus.IDLE, SyncStatus.SUCCESS)
+    # Start background worker: it syncs once right away
+    worker.start()
+    assert worker._running is True
+    assert wait_for(lambda: worker.status == SyncStatus.SUCCESS)
 
-        # Simulate note change triggering watcher callback
-        worker._on_watcher_change()
-        assert worker._wakeup_event.is_set()
+    # A note change wakes the engine for another Sync run
+    worker._on_watcher_change()
+    assert wait_for(lambda: len(launcher.commands) == 2)
 
-        # Stop worker
-        worker.stop()
-        assert worker._running is False
+    # Stop worker
+    worker.stop()
+    assert worker._running is False
 
 
 # ============================================================================
@@ -148,38 +144,32 @@ def test_s04_offline_online_recovery_workflow(isolated_env, sample_vault):
     """S-04: Network failure -> error state & cooldown -> network restores -> retry succeeds."""
     import subprocess
     cfg = ConfigData(local_vault_path=str(sample_vault), remote_folder_name="vault")
-    mock_rclone = MagicMock()
-    mock_rclone.build_bisync_command.return_value = ["mock_rclone"]
-
-    worker = SyncWorker(config=cfg, rclone_manager=mock_rclone)
+    offline = ["ERROR : Connection refused: dial tcp"]
+    launcher = FakeLauncher(
+        FakeProcess(offline, returncode=1),
+        FakeProcess(offline, returncode=1),
+        FakeProcess(["Bisync successful"]),
+    )
+    worker = SyncWorker(config=cfg, rclone_manager=stub_rclone(), launcher=launcher)
     tray = TrayManager(worker=worker, on_open_gui=MagicMock(), on_exit=MagicMock())
     worker.register_listener(tray.update_status)
 
     with patch.object(tray, "notify") as mock_notify:
         # Phase 1: Network failure mid-sync
-        with patch("subprocess.run", side_effect=subprocess.CalledProcessError(
-            returncode=1, cmd=["rclone"], stderr="ERROR : Connection refused: dial tcp"
-        )):
-            success = worker._execute_sync()
-            assert success is False
-            assert worker.status == SyncStatus.ERROR
-            assert mock_notify.call_count == 1
+        success = worker._execute_sync()
+        assert success is False
+        assert worker.status == SyncStatus.ERROR
+        assert mock_notify.call_count == 1
 
         # Phase 2: Duplicate failure suppressed by cooldown
-        with patch("subprocess.run", side_effect=subprocess.CalledProcessError(
-            returncode=1, cmd=["rclone"], stderr="ERROR : Connection refused: dial tcp"
-        )):
-            worker._execute_sync()
-            # Notification must remain at 1 call due to cooldown
-            assert mock_notify.call_count == 1
+        worker._execute_sync()
+        assert mock_notify.call_count == 1
 
         # Phase 3: Network restored -> manual sync succeeds
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="Bisync successful", stderr="")
-            success = worker._execute_sync()
-            assert success is True
-            assert worker.status == SyncStatus.SUCCESS
-            assert tray._status_text.startswith("Sincronizado con éxito")
+        success = worker._execute_sync()
+        assert success is True
+        assert worker.status == SyncStatus.SUCCESS
+        assert tray._status_text.startswith("Sincronizado con éxito")
 
 
 # ============================================================================
@@ -207,15 +197,13 @@ def test_s05_multi_vault_switching_workflow(isolated_env, tmp_path):
     cfg_mgr.save(cfg)
 
     # 1. Sync Work Vault
-    mock_rclone = MagicMock()
-    mock_rclone.build_bisync_command.return_value = ["mock_rclone"]
-    worker = SyncWorker(config=cfg, rclone_manager=mock_rclone)
+    launcher = FakeLauncher()
+    worker = SyncWorker(config=cfg, rclone_manager=stub_rclone(), launcher=launcher)
 
-    with patch("subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(returncode=0, stdout="Bisync successful", stderr="")
-        success = worker._execute_sync()
-        assert success is True
-        mock_rclone.build_bisync_command.assert_called_with(str(v1), "WorkRemote", resync=True)
+    success = worker._execute_sync()
+    assert success is True
+    assert launcher.commands[-1][2:4] == [str(v1), "gdrive:WorkRemote"]
+    assert launcher.commands[-1][-1] == "--resync"
 
     # 2. Switch to Personal Vault
     cfg.active_vault_id = "v_pers"
@@ -224,8 +212,7 @@ def test_s05_multi_vault_switching_workflow(isolated_env, tmp_path):
     cfg.first_sync_done = False
     cfg_mgr.save(cfg)
 
-    with patch("subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(returncode=0, stdout="Bisync successful", stderr="")
-        success = worker._execute_sync()
-        assert success is True
-        mock_rclone.build_bisync_command.assert_called_with(str(v2), "PersonalRemote", resync=True)
+    success = worker._execute_sync()
+    assert success is True
+    assert launcher.commands[-1][2:4] == [str(v2), "gdrive:PersonalRemote"]
+    assert launcher.commands[-1][-1] == "--resync"

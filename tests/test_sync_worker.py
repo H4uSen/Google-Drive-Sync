@@ -1,179 +1,339 @@
-"""Tests for SyncWorker."""
+"""
+Sync engine (SyncWorker): how it turns each Sync run into status, history and
+events. rclone runs are scripted through FakeLauncher; RcloneManager is stubbed.
+"""
+import json
+import threading
+import time
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import MagicMock, patch
-from src.core.sync_worker import SyncWorker, SyncStatus
+
 from src.core.config import ConfigData
+from src.core.events import EventDispatcher, EventType
+from src.core.history_manager import SyncHistoryManager
+from src.core.rclone_manager import RcloneManager
+from src.core.sync_worker import SyncStatus, SyncWorker, clean_error_message, try_recover_stale_lock
+from tests.fakes import FakeLauncher, FakeProcess
 
-def test_sync_worker_state_transitions():
-    cfg = ConfigData(local_vault_path="/fake/vault", sync_interval_minutes=2)
-    worker = SyncWorker(config=cfg, rclone_manager=MagicMock())
-    assert worker.status == SyncStatus.IDLE
-    worker.pause()
-    assert worker.status == SyncStatus.PAUSED
-    worker.resume()
-    assert worker.status == SyncStatus.IDLE
+GUARD_LINES = [
+    "ERROR : Bisync critical error: cannot find prior Path1 or Path2 listings",
+    "ERROR : Bisync aborted. Must run --resync to recover.",
+]
 
-def test_concurrent_trigger_rejection():
-    # Review Focus 5: Llamadas concurrentes a trigger_now no solapan ejecuciones
-    cfg = ConfigData(local_vault_path="/fake/vault")
-    worker = SyncWorker(config=cfg, rclone_manager=MagicMock())
-    worker._is_syncing = True
-    result = worker.trigger_now()
-    assert result is False
 
-def test_rclone_error_handling_keeps_worker_alive(tmp_path):
-    # Review Focus 4: Fallo de red/retorno no-cero pasa a ERROR y no mata el hilo
-    vault = tmp_path / "vault"
-    vault.mkdir()
-    cfg = ConfigData(local_vault_path=str(vault))
-    mock_mgr = MagicMock()
-    mock_mgr.build_bisync_command.return_value = ["mock_rclone"]
-    worker = SyncWorker(config=cfg, rclone_manager=mock_mgr)
-    
-    with patch("subprocess.run") as mock_run:
-        mock_run.side_effect = Exception("Network offline")
-        success = worker._execute_sync()
-        assert success is False
-        assert worker.status == SyncStatus.ERROR
-        assert "offline" in worker.last_message.lower()
+class Engine:
+    """A SyncWorker wired to fakes, plus what tests observe of it."""
 
-def test_missing_vault_path_notifies_error():
-    cfg = ConfigData(local_vault_path="")
-    worker = SyncWorker(config=cfg, rclone_manager=MagicMock())
-    success = worker._execute_sync()
-    assert success is False
-    assert worker.status == SyncStatus.ERROR
+    def __init__(self, tmp_path, *processes, first_sync_done=True, remote_folder="vault"):
+        vault = tmp_path / "vault"
+        vault.mkdir(exist_ok=True)
+        self.vault = vault
+        self.config = ConfigData(
+            local_vault_path=str(vault),
+            remote_folder_name=remote_folder,
+            first_sync_done=first_sync_done,
+        )
+        self.rclone = MagicMock(spec=RcloneManager)
+        self.rclone.ensure_rclone_binary.return_value = "/opt/rclone"
+        self.launcher = FakeLauncher(*processes)
+        self.dispatcher = EventDispatcher()
+        self.history = SyncHistoryManager(tmp_path / "history.json")
+        self.worker = SyncWorker(
+            config=self.config,
+            rclone_manager=self.rclone,
+            event_dispatcher=self.dispatcher,
+            history_manager=self.history,
+            launcher=self.launcher,
+        )
+        self.batches = []
+        self.dispatcher.subscribe(EventType.BATCH_COMPLETED, lambda ev: self.batches.append(ev.data))
+        self.statuses = []
+        self.worker.register_listener(lambda status, msg: self.statuses.append(status))
 
-def test_nonexistent_vault_path_notifies_error(tmp_path):
-    non_existent = str(tmp_path / "non_existent_vault")
-    cfg = ConfigData(local_vault_path=non_existent)
-    worker = SyncWorker(config=cfg, rclone_manager=MagicMock())
-    success = worker._execute_sync()
-    assert success is False
-    assert worker.status == SyncStatus.ERROR
-    assert "no existe" in worker.last_message.lower()
+    def sync(self) -> bool:
+        return self.worker._execute_sync()
 
-def test_resync_recovery_error_does_not_auto_resync(tmp_path):
-    # SEC-01: Must NOT automatically run --resync if safety check trips
-    import subprocess
-    vault = tmp_path / "vault"
-    vault.mkdir()
-    cfg = ConfigData(local_vault_path=str(vault))
-    mock_mgr = MagicMock()
-    mock_mgr.build_bisync_command.return_value = ["mock_rclone"]
-    worker = SyncWorker(config=cfg, rclone_manager=mock_mgr)
+    @property
+    def last_run(self):
+        return self.history.get_recent_runs(1)[0]
 
-    err = subprocess.CalledProcessError(
-        returncode=2,
-        cmd=["mock_rclone"],
-        stderr="Critical error: bisync aborted. Too many deletes! Must run --resync to recover",
+    def resync_flags(self):
+        return ["--resync" in cmd for cmd in self.launcher.commands]
+
+
+def copied(*names):
+    return [f"2026/10/07 10:00:00 INFO  : {n}: Copied (new)" for n in names]
+
+
+# --- Successful runs ---------------------------------------------------------
+
+def test_successful_run_reports_success_history_and_batch(tmp_path):
+    engine = Engine(tmp_path, FakeProcess(copied("a.md", "b.md")))
+    (engine.vault / "a.md").write_text("1234", encoding="utf-8")
+
+    assert engine.sync() is True
+
+    assert engine.statuses == [SyncStatus.SYNCING, SyncStatus.SUCCESS]
+    run = engine.last_run
+    assert (run.status, run.files_transferred, run.bytes_transferred) == ("SUCCESS", ["a.md", "b.md"], 4)
+    assert [(b.total_files, b.total_bytes, b.status) for b in engine.batches] == [(2, 4, "SUCCESS")]
+    engine.rclone.ensure_remote_dir.assert_called_once_with("vault")
+
+
+def test_conflicts_are_recorded_as_conflict(tmp_path):
+    engine = Engine(tmp_path, FakeProcess(["ERROR : note.md: md5 differ"]))
+
+    assert engine.sync() is True
+
+    assert engine.last_run.status == "CONFLICT"
+    assert "1 files" in engine.last_run.error_message
+
+
+def test_first_sync_of_a_vault_is_a_resync_and_later_ones_are_not(tmp_path):
+    engine = Engine(tmp_path, first_sync_done=False)
+
+    engine.sync()
+    engine.sync()
+
+    assert engine.resync_flags() == [True, False]
+    assert engine.config.first_sync_done is True
+
+
+# --- Failed runs -------------------------------------------------------------
+
+def test_rclone_failure_reports_error_and_keeps_partial_files(tmp_path):
+    engine = Engine(tmp_path, FakeProcess(
+        copied("a.md") + ["2026/10/07 10:00:01 ERROR : Bisync critical error: network down"],
+        returncode=1,
+    ))
+
+    assert engine.sync() is False
+
+    assert engine.worker.status == SyncStatus.ERROR
+    assert "network down" in engine.worker.last_message
+    assert (engine.last_run.status, engine.last_run.files_transferred) == ("PARTIAL", ["a.md"])
+    assert engine.batches == []
+
+
+def test_rclone_failure_with_no_files_is_an_error(tmp_path):
+    engine = Engine(tmp_path, FakeProcess(["ERROR : Bisync critical error: boom"], returncode=1))
+
+    engine.sync()
+
+    assert engine.last_run.status == "ERROR"
+
+
+def test_safety_stop_flags_needs_resync_and_never_resyncs_on_its_own(tmp_path):
+    engine = Engine(tmp_path, FakeProcess(GUARD_LINES, returncode=2))
+
+    assert engine.sync() is False
+
+    assert engine.worker.needs_resync is True
+    assert "guardas de seguridad" in engine.worker.last_message.lower()
+    assert engine.resync_flags() == [False]
+
+
+def test_requested_resync_runs_once_and_clears_needs_resync(tmp_path):
+    engine = Engine(tmp_path, FakeProcess(GUARD_LINES, returncode=2))
+    engine.sync()
+
+    engine.worker._force_resync = True
+    engine.sync()
+    engine.sync()
+
+    assert engine.resync_flags() == [False, True, False]
+    assert engine.worker.needs_resync is False
+
+
+def test_stale_lock_from_a_dead_process_is_cleared_and_the_run_retried(tmp_path):
+    lock_file = tmp_path / "stale.lck"
+    lock_file.write_text(json.dumps({"PID": "99999999"}), encoding="utf-8")
+    engine = Engine(
+        tmp_path,
+        FakeProcess([f"ERROR : Bisync critical error: lock file already exists: {lock_file}"], returncode=1),
+        FakeProcess(copied("a.md")),
     )
-    with patch("subprocess.run", side_effect=err) as mock_run:
-        success = worker._execute_sync()
-        assert success is False
-        assert worker.status == SyncStatus.ERROR
-        assert "resincronización" in worker.last_message.lower() or "resync" in worker.last_message.lower()
-        # Verify subprocess.run was only called once and NEVER re-invoked with --resync
-        assert mock_run.call_count == 1
-        assert mock_mgr.build_bisync_command.call_count == 1
 
-def test_subprocess_timeout_expired_handles_gracefully(tmp_path):
-    # SEC-06: Subprocess timeout prevents hung worker
-    import subprocess
-    vault = tmp_path / "vault"
-    vault.mkdir()
-    cfg = ConfigData(local_vault_path=str(vault))
-    mock_mgr = MagicMock()
-    mock_mgr.build_bisync_command.return_value = ["mock_rclone"]
-    worker = SyncWorker(config=cfg, rclone_manager=mock_mgr)
+    assert engine.sync() is True
 
-    timeout_err = subprocess.TimeoutExpired(cmd=["mock_rclone"], timeout=900)
-    with patch("subprocess.run", side_effect=timeout_err):
-        success = worker._execute_sync()
-        assert success is False
-        assert worker.status == SyncStatus.ERROR
-        assert "tiempo" in worker.last_message.lower() or "timeout" in worker.last_message.lower()
+    assert len(engine.launcher.commands) == 2
+    assert not lock_file.exists()
+    assert engine.last_run.files_transferred == ["a.md"]
+
+
+def test_timed_out_run_reports_error(tmp_path):
+    engine = Engine(tmp_path, FakeProcess(hang=True))
+    engine.worker.run_timeout = 0.2
+
+    assert engine.sync() is False
+
+    assert engine.worker.status == SyncStatus.ERROR
+    assert "tiempo" in engine.worker.last_message.lower()
+    assert engine.last_run.status == "ERROR"
+
+
+def test_unexpected_error_reports_error_and_engine_survives(tmp_path):
+    engine = Engine(tmp_path, FakeProcess(copied("a.md")))
+    engine.rclone.ensure_remote_dir.side_effect = [Exception("Network offline"), True]
+
+    assert engine.sync() is False
+    assert "offline" in engine.worker.last_message.lower()
+
+    assert engine.sync() is True
+
+
+def test_invalid_remote_folder_reports_error_without_launching(tmp_path):
+    engine = Engine(tmp_path, remote_folder="../escape")
+
+    assert engine.sync() is False
+
+    assert engine.worker.status == SyncStatus.ERROR
+    assert engine.launcher.commands == []
+
+
+def test_missing_vault_path_reports_error(tmp_path):
+    engine = Engine(tmp_path)
+    engine.config.local_vault_path = ""
+
+    assert engine.sync() is False
+    assert engine.worker.status == SyncStatus.ERROR
+
+
+def test_nonexistent_vault_path_reports_error(tmp_path):
+    engine = Engine(tmp_path)
+    engine.config.local_vault_path = str(tmp_path / "missing")
+
+    assert engine.sync() is False
+    assert "no existe" in engine.worker.last_message.lower()
+
+
+# --- Cancellation ------------------------------------------------------------
+
+def test_cancel_while_preparing_the_remote_never_launches_rclone(tmp_path):
+    engine = Engine(tmp_path)
+    engine.rclone.ensure_remote_dir.side_effect = lambda folder: engine.worker.cancel_sync()
+
+    assert engine.sync() is False
+
+    assert engine.launcher.commands == []
+    assert engine.worker.status == SyncStatus.IDLE
+    assert "cancelada" in engine.worker.last_message.lower()
+    assert engine.last_run.status == "PARTIAL"
+
+
+def test_cancel_during_a_run_stops_rclone(tmp_path):
+    proc = FakeProcess(copied("a.md"), hang=True)
+    engine = Engine(tmp_path, proc)
+    result = {}
+    t = threading.Thread(target=lambda: result.setdefault("ok", engine.sync()))
+    t.start()
+
+    assert proc.drained.wait(timeout=2)
+    engine.worker.cancel_sync()
+    t.join(timeout=2)
+
+    assert result["ok"] is False
+    assert proc.terminated
+    assert engine.worker.status == SyncStatus.IDLE
+    assert (engine.last_run.status, engine.last_run.files_transferred) == ("PARTIAL", ["a.md"])
+
+
+def test_stop_cancels_the_active_run(tmp_path):
+    proc = FakeProcess(hang=True)
+    engine = Engine(tmp_path, proc)
+    engine.worker.start()
+
+    assert proc.drained.wait(timeout=2)
+    engine.worker.stop()
+
+    assert proc.terminated
+    assert engine.worker._running is False
+
+
+# --- Engine control ----------------------------------------------------------
+
+def test_pause_and_resume_report_status(tmp_path):
+    engine = Engine(tmp_path)
+
+    engine.worker.pause()
+    assert engine.worker.status == SyncStatus.PAUSED
+    engine.worker.resume()
+    assert engine.worker.status == SyncStatus.IDLE
+
+
+def test_trigger_is_rejected_while_a_run_is_active(tmp_path):
+    engine = Engine(tmp_path)
+    engine.worker._is_syncing = True
+
+    assert engine.worker.trigger_now() is False
+
+
+def test_request_resync_when_stopped_runs_in_background(tmp_path):
+    engine = Engine(tmp_path)
+
+    assert engine.worker.request_resync() is True
+
+    deadline = time.time() + 5
+    while not engine.launcher.commands and time.time() < deadline:
+        time.sleep(0.02)
+    assert engine.resync_flags() == [True]
+
+
+def test_request_resync_is_rejected_while_syncing(tmp_path):
+    engine = Engine(tmp_path)
+    engine.worker._is_syncing = True
+
+    assert engine.worker.request_resync() is False
+    assert engine.worker._force_resync is False
+
+
+def test_changes_during_a_run_trigger_another_run_after_it(tmp_path):
+    engine = Engine(tmp_path)
+    engine.worker._pending_sync = True
+
+    engine.sync()
+
+    assert engine.worker._pending_sync is False
+    assert engine.worker._wakeup_event.is_set()
+
+
+# --- Error text helpers the engine relies on ---------------------------------
 
 def test_clean_error_message_strips_ansi():
-    from src.core.sync_worker import clean_error_message
-    ansi_msg = "\x1b[0m\x1b[91mrclone deletefile \"/some/path.lck\"\x1b[0m"
-    result = clean_error_message(ansi_msg)
+    result = clean_error_message("\x1b[0m\x1b[91mrclone deletefile \"/some/path.lck\"\x1b[0m")
+
     assert "\x1b" not in result
-    assert "[0m" not in result
-    assert "[91m" not in result
     assert "rclone deletefile" in result
 
-def test_try_recover_stale_lock_dead_pid(tmp_path):
-    import json
-    from src.core.sync_worker import try_recover_stale_lock
-    lock_file = tmp_path / "test.lck"
-    dead_pid = 99999999
-    lock_data = {
-        "Session": str(lock_file),
-        "PID": str(dead_pid),
-        "TimeRenewed": "2026-10-01T00:00:00Z",
-        "TimeExpires": "2026-10-01T00:15:00Z",
-    }
-    lock_file.write_text(json.dumps(lock_data), encoding="utf-8")
-    assert lock_file.exists()
 
-    err_text = f"rclone deletefile \"{lock_file}\""
-    recovered = try_recover_stale_lock(err_text)
-    assert recovered is True
+def test_stale_lock_of_a_dead_process_is_removed(tmp_path):
+    lock_file = tmp_path / "test.lck"
+    lock_file.write_text(json.dumps({"PID": "99999999"}), encoding="utf-8")
+
+    assert try_recover_stale_lock(f"rclone deletefile \"{lock_file}\"") is True
     assert not lock_file.exists()
 
-def test_try_recover_stale_lock_active_pid(tmp_path):
+
+def test_lock_of_a_live_process_is_kept(tmp_path):
     import os
-    import json
-    from src.core.sync_worker import try_recover_stale_lock
+
     lock_file = tmp_path / "test.lck"
-    live_pid = os.getpid()
-    lock_data = {
-        "Session": str(lock_file),
-        "PID": str(live_pid),
-        "TimeRenewed": "2026-10-01T00:00:00Z",
-        "TimeExpires": "2026-10-01T00:15:00Z",
-    }
-    lock_file.write_text(json.dumps(lock_data), encoding="utf-8")
+    lock_file.write_text(json.dumps({"PID": str(os.getpid())}), encoding="utf-8")
+
+    assert try_recover_stale_lock(f"lock file already exists: {lock_file}") is False
     assert lock_file.exists()
 
-    err_text = f"lock file already exists: {lock_file}"
-    recovered = try_recover_stale_lock(err_text)
-    assert recovered is False
-    assert lock_file.exists()
 
-def test_execute_sync_auto_recovers_stale_lock(tmp_path):
-    import subprocess
-    import json
-    vault = tmp_path / "vault"
-    vault.mkdir()
-    lock_file = tmp_path / "stale.lck"
-    lock_data = {
-        "Session": str(lock_file),
-        "PID": "99999999",
-    }
-    lock_file.write_text(json.dumps(lock_data), encoding="utf-8")
+def test_rapid_start_trigger_cancel_stop_leaves_no_run_behind(tmp_path):
+    engine = Engine(tmp_path, *[FakeProcess(copied("a.md"), delay_per_line=0.01) for _ in range(10)])
 
-    cfg = ConfigData(local_vault_path=str(vault))
-    mock_mgr = MagicMock()
-    mock_mgr.build_bisync_command.return_value = ["mock_rclone"]
-    worker = SyncWorker(config=cfg, rclone_manager=mock_mgr)
+    engine.worker.start()
+    for _ in range(5):
+        engine.worker.trigger_now()
+        engine.worker.cancel_sync()
+    engine.worker.stop()
 
-    err = subprocess.CalledProcessError(
-        returncode=1,
-        cmd=["mock_rclone"],
-        stderr=f"ERROR : Bisync critical error: lock file already exists: {lock_file}",
-    )
-
-    success_result = MagicMock()
-    success_result.returncode = 0
-
-    with patch("subprocess.run", side_effect=[err, success_result]) as mock_run:
-        success = worker._execute_sync()
-        assert success is True
-        assert worker.status == SyncStatus.SUCCESS
-        assert not lock_file.exists()
-        assert mock_run.call_count == 2
-
-
-
+    assert engine.worker._running is False
+    assert not engine.worker._thread.is_alive()
+    assert all(p.closed for p in engine.launcher.launched)

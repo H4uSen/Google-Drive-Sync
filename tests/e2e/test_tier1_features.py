@@ -437,24 +437,32 @@ def test_f23_notification_deduplication(isolated_env):
 # ============================================================================
 # F-24: Streaming Subprocess Output (M1 / R4)
 # ============================================================================
-def test_f24_streaming_subprocess(isolated_env, fake_rclone_factory):
-    """F-24: Popen execution parsing rclone stdout lines in real time."""
+def test_f24_streaming_subprocess(isolated_env, sample_vault):
+    """F-24: rclone stdout lines are parsed into live events as they stream."""
     require_feature("F-24")
     from src.core.sync_worker import SyncWorker
+    from src.core.events import EventDispatcher, EventType
+    from tests.fakes import FakeLauncher, FakeProcess, stub_rclone
 
     lines = [
         "Transferred: 500 KiB / 1 MiB, 50%, 100 KiB/s",
         "* Notes/Todo.md: 100% /100%, 50 KiB/s",
         "Bisync successful"
     ]
-    fake_proc = fake_rclone_factory(stdout_lines=lines, returncode=0)
+    dispatcher = EventDispatcher()
+    progress = []
+    dispatcher.subscribe(EventType.PROGRESS_UPDATED, lambda ev: progress.append(ev.data.percentage))
 
-    cfg = ConfigData(local_vault_path="/tmp/v", remote_folder_name="v")
-    worker = SyncWorker(config=cfg, rclone_manager=MagicMock())
+    cfg = ConfigData(local_vault_path=str(sample_vault), remote_folder_name="v", first_sync_done=True)
+    worker = SyncWorker(
+        config=cfg,
+        rclone_manager=stub_rclone(),
+        event_dispatcher=dispatcher,
+        launcher=FakeLauncher(FakeProcess(lines)),
+    )
 
-    with patch("subprocess.Popen", return_value=fake_proc):
-        success, details = worker.run_streaming_sync()
-        assert success is True
+    assert worker._execute_sync() is True
+    assert progress == [50.0, 100.0]
 
 
 # ============================================================================

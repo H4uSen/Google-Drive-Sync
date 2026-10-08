@@ -2,15 +2,16 @@
 from unittest.mock import MagicMock, patch
 from src.core.config import ConfigData
 from src.core.sync_worker import SyncWorker, SyncStatus
+from tests.fakes import FakeLauncher, stub_rclone
 
 
 def test_sync_worker_watcher_lifecycle(tmp_path):
     vault = tmp_path / "my_vault"
     vault.mkdir()
     cfg = ConfigData(local_vault_path=str(vault), realtime_sync_enabled=True)
-    worker = SyncWorker(config=cfg, rclone_manager=MagicMock())
+    worker = SyncWorker(config=cfg, rclone_manager=stub_rclone(), launcher=FakeLauncher())
 
-    with patch("src.core.sync_worker.VaultWatcher") as mock_watcher_cls, patch("subprocess.run"):
+    with patch("src.core.sync_worker.VaultWatcher") as mock_watcher_cls:
         mock_watcher = MagicMock()
         mock_watcher_cls.return_value = mock_watcher
 
@@ -72,11 +73,10 @@ def test_sync_worker_executes_pending_sync_after_finish(tmp_path):
     vault = tmp_path / "my_vault"
     vault.mkdir()
     cfg = ConfigData(local_vault_path=str(vault))
-    worker = SyncWorker(config=cfg, rclone_manager=MagicMock())
+    worker = SyncWorker(config=cfg, rclone_manager=stub_rclone(), launcher=FakeLauncher())
     worker._pending_sync = True
 
-    with patch("subprocess.run"):
-        worker._execute_sync()
+    worker._execute_sync()
 
     assert worker._pending_sync is False
     assert worker._wakeup_event.is_set()
@@ -86,7 +86,7 @@ def test_sync_worker_watcher_not_started_when_disabled(tmp_path):
     vault = tmp_path / "my_vault"
     vault.mkdir()
     cfg = ConfigData(local_vault_path=str(vault), realtime_sync_enabled=False)
-    worker = SyncWorker(config=cfg, rclone_manager=MagicMock())
+    worker = SyncWorker(config=cfg, rclone_manager=stub_rclone(), launcher=FakeLauncher())
 
     with patch("src.core.sync_worker.VaultWatcher") as mock_watcher_cls:
         worker.start()

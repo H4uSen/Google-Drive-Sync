@@ -141,36 +141,6 @@ class TestEmptyHistoryRecordingLifecycle:
         disk_data = json.loads(hist_file.read_text(encoding="utf-8"))
         assert len(disk_data) == 100
 
-    def test_streaming_sync_records_history_when_initially_empty(self, tmp_path):
-        """run_streaming_sync correctly records to initially empty SyncHistoryManager."""
-        hist_file = tmp_path / "streaming_sync_history.json"
-        hm = SyncHistoryManager(history_file=hist_file)
-        assert len(hm) == 0
-
-        worker = SyncWorker(config=MagicMock(), rclone_manager=MagicMock(), history_manager=hm)
-
-        # Mock _stream_subprocess for SUCCESS
-        worker._stream_subprocess = MagicMock(return_value=(0, "Transferred 1 files", ["doc.md"], 1024, set()))
-        success, details = worker.run_streaming_sync(cmd=["dummy"])
-        assert success is True
-        assert len(hm) == 1
-        assert hm.get_recent_runs()[0].status == "SUCCESS"
-        assert hm.get_recent_runs()[0].bytes_transferred == 1024
-
-        # Mock _stream_subprocess for CONFLICT
-        worker._stream_subprocess = MagicMock(return_value=(0, "Conflict on c.md", ["c.md"], 512, {"c.md"}))
-        success, details = worker.run_streaming_sync(cmd=["dummy"])
-        assert success is True
-        assert len(hm) == 2
-        assert hm.get_recent_runs()[0].status == "CONFLICT"
-
-        # Mock _stream_subprocess for FAILURE (non-zero return code)
-        worker._stream_subprocess = MagicMock(return_value=(1, "Fatal error connecting", [], 0, set()))
-        success, details = worker.run_streaming_sync(cmd=["dummy"])
-        assert success is False
-        assert len(hm) == 3
-        assert hm.get_recent_runs()[0].status == "ERROR"
-
     def test_execute_sync_presync_validation_errors_recorded_when_initially_empty(self, tmp_path):
         """_execute_sync pre-sync validation failures record ERROR history when empty."""
         hist_file = tmp_path / "presync_err_history.json"

@@ -39,7 +39,7 @@ FEATURE_SPEC = {
     "F-21": {"name": "Tray Fatal Error Notification", "milestone": "M4", "module": "src.tray.tray_icon", "attr": "TrayManager"},
     "F-22": {"name": "Tray Batch Complete Notification", "milestone": "M4", "module": "src.tray.tray_icon", "attr": "TrayManager"},
     "F-23": {"name": "Notification Deduplication", "milestone": "M4", "module": "src.tray.tray_icon", "attr": "TrayManager"},
-    "F-24": {"name": "Streaming Subprocess Output", "milestone": "M1", "module": "src.core.sync_worker", "attr": "SyncWorker"},
+    "F-24": {"name": "Streaming Subprocess Output", "milestone": "M1", "module": "src.core.sync_run", "attr": "SyncRun"},
     "F-25": {"name": "Decoupled Thread-Safe Events", "milestone": "M1", "module": "src.core.events", "attr": "EventDispatcher"},
     "F-26": {"name": "Graceful Error Boundaries", "milestone": "M1", "module": "src.core.sync_worker", "attr": "SyncWorker"},
     "F-27": {"name": "Minimized Startup Mode", "milestone": "M1", "module": "src.main", "attr": "main"},
@@ -214,11 +214,9 @@ def probe_feature(feature_id: str) -> tuple[bool, str]:
             return False, reason
 
     elif feature_id == "F-24":  # Streaming subprocess
-        # Check if SyncWorker uses Popen or line streaming
-        import inspect
-        code = inspect.getsource(cls)
-        if "subprocess.Popen" not in code and "Popen" not in code:
-            reason = f"{feature_id} ({spec['name']}) pending in M1: SyncWorker still uses synchronous subprocess.run"
+        # A Sync run streams rclone output through a launcher (Popen in production)
+        if not hasattr(cls, "execute") or not hasattr(sys.modules[spec["module"]], "popen_launcher"):
+            reason = f"{feature_id} ({spec['name']}) pending in M1: SyncRun does not stream through popen_launcher"
             if strict:
                 pytest.fail(f"STRICT E2E FAILURE: {reason}")
             return False, reason
@@ -310,74 +308,3 @@ def headless_gui(monkeypatch):
         monkeypatch.setattr(ctk.CTk, "update_idletasks", lambda self: None)
     except Exception:
         pass
-
-
-class FakeRcloneProcess:
-    """Simulates a streaming rclone subprocess for testing."""
-    def __init__(self, stdout_lines=None, stderr_lines=None, returncode=0, delay_per_line=0.0):
-        self.stdout_lines = stdout_lines or []
-        self.stderr_lines = stderr_lines or []
-        self.returncode = returncode
-        self.delay_per_line = delay_per_line
-        self._poll_called = False
-
-    @property
-    def stdout(self):
-        class LineIterator:
-            def __init__(self, lines, delay):
-                self.lines = list(lines)
-                self.delay = delay
-            def __iter__(self):
-                for line in self.lines:
-                    if self.delay > 0:
-                        time.sleep(self.delay)
-                    yield line
-            def readline(self):
-                if self.lines:
-                    if self.delay > 0:
-                        time.sleep(self.delay)
-                    return self.lines.pop(0)
-                return ""
-            def close(self):
-                pass
-        return LineIterator(self.stdout_lines, self.delay_per_line)
-
-    @property
-    def stderr(self):
-        class StderrIterator:
-            def __init__(self, lines):
-                self.lines = list(lines)
-            def readline(self):
-                if self.lines:
-                    return self.lines.pop(0)
-                return ""
-            def read(self):
-                return "".join(self.lines)
-            def close(self):
-                pass
-        return StderrIterator(self.stderr_lines)
-
-    def poll(self):
-        return self.returncode
-
-    def wait(self, timeout=None):
-        return self.returncode
-
-    def kill(self):
-        pass
-
-    def terminate(self):
-        pass
-
-
-@pytest.fixture
-def fake_rclone_factory():
-    """Factory fixture to generate custom FakeRcloneProcess instances."""
-    def _create(stdout_lines=None, stderr_lines=None, returncode=0, delay=0.0):
-        return FakeRcloneProcess(
-            stdout_lines=stdout_lines,
-            stderr_lines=stderr_lines,
-            returncode=returncode,
-            delay_per_line=delay
-        )
-    return _create

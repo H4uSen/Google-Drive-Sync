@@ -161,49 +161,6 @@ class RcloneManager:
             return [bin_cmd, "config", "reconnect", f"{remote_name}:", "--auto-confirm"]
         return self.get_create_command(remote_name)
 
-    def build_bisync_command(
-        self,
-        local_path: str,
-        remote_folder: str,
-        resync: bool = False,
-        filters_file: Path | None = None,
-    ) -> list[str]:
-        bin_cmd = self.ensure_rclone_binary()
-        validate_local_path(local_path)
-        clean_remote = sanitize_remote_folder(remote_folder)
-
-        target_filters = filters_file or get_filters_file_path()
-        if not target_filters.exists():
-            write_filters_file(target_filters)
-
-        remote_target = f"gdrive:{clean_remote}"
-        cmd = [
-            bin_cmd,
-            "bisync",
-            str(local_path),
-            remote_target,
-            "--filters-file",
-            str(target_filters),
-            "--drive-chunk-size",
-            "32M",
-            "--conflict-resolve",
-            "none",
-            "--conflict-loser",
-            "pathname",
-            "--tpslimit",
-            "8",
-            "--max-lock",
-            "15m",
-            "--color",
-            "never",
-            "--retries",
-            "3",
-            "-v",
-        ]
-        if resync:
-            cmd.append("--resync")
-        return cmd
-
     def get_storage_quota(self, remote_name: str = "gdrive") -> dict | None:
         bin_cmd = self.ensure_rclone_binary()
         try:
