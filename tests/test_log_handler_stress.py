@@ -254,6 +254,7 @@ class TestConcurrentMutationAndExport:
         handler = GuiLogHandler(max_entries=500)
         logger = logging.getLogger("stress_clear_export")
         logger.setLevel(logging.INFO)
+        logger.propagate = False
         logger.addHandler(handler)
 
         stop_event = threading.Event()
@@ -265,6 +266,7 @@ class TestConcurrentMutationAndExport:
                 try:
                     logger.info(f"Message {i}")
                     i += 1
+                    time.sleep(0.0005)
                 except Exception as e:
                     errors.append(e)
 
@@ -289,16 +291,19 @@ class TestConcurrentMutationAndExport:
             threading.Thread(target=exporter),
             threading.Thread(target=cleaner),
         ]
-        for t in threads:
-            t.start()
+        try:
+            for t in threads:
+                t.start()
 
-        time.sleep(0.2)
-        stop_event.set()
-        for t in threads:
-            t.join(timeout=5.0)
-            assert not t.is_alive()
+            time.sleep(0.2)
+            stop_event.set()
+            for t in threads:
+                t.join(timeout=5.0)
+                assert not t.is_alive()
 
-        assert errors == []
+            assert errors == []
+        finally:
+            logger.removeHandler(handler)
 
 
 class TestMalformedAndAdversarialSearch:

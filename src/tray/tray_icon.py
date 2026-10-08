@@ -150,6 +150,8 @@ class TrayManager:
 
     def update_status(self, status: SyncStatus, msg: str):
         self._status_text = msg
+        if status == SyncStatus.SUCCESS and getattr(self.worker, "last_sync_time", ""):
+            self.set_last_sync(self.worker.last_sync_time)
         if self.icon:
             try:
                 self.icon.icon = self.create_icon_image(status.color)

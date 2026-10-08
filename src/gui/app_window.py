@@ -75,6 +75,20 @@ def format_byte_size(bytes_val: int) -> str:
         return f"{val / (1024**3):.2f} GB"
 
 
+def format_local_timestamp(ts: str) -> str:
+    """Format an ISO 8601 timestamp string into local system time 'YYYY-MM-DD HH:MM:SS'."""
+    if not ts or not isinstance(ts, str):
+        return ""
+    try:
+        clean_ts = ts.strip().replace("Z", "+00:00")
+        dt = datetime.fromisoformat(clean_ts)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone()
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return ts.replace("T", " ").replace("Z", "")[:19]
+
+
 class HeadlessStub:
     """
     Lightweight, duck-typed stub implementing common CTk widget interfaces
@@ -236,6 +250,9 @@ class MainWindow(ctk.CTk):
         self._displayed_history_records: List[SyncRunRecord] = []
         self._event_subscriptions: List[Any] = []
         self._log_listener: Optional[Callable[[LogEntry], None]] = None
+        self._is_resyncing: bool = False
+        self._resync_anim_after_id: Optional[str] = None
+        self._resync_anim_step: int = 0
 
         # 1. Initialize headless fallback stubs first
         self._init_headless_components()
@@ -295,6 +312,7 @@ class MainWindow(ctk.CTk):
 
         self.btn_toggle_sync = HeadlessStub(text="Iniciar Sincronización")
         self.btn_sync_now = HeadlessStub(text="Sincronizar Ahora")
+        self.btn_resync = HeadlessStub(text="Reparar (Resync)")
         self.auth_status = HeadlessStub(text="")
         self.btn_auth = HeadlessStub(text="Conectar Cuenta")
 
@@ -580,6 +598,17 @@ class MainWindow(ctk.CTk):
         )
         self.btn_sync_now.pack(side="left", padx=(0, 8))
 
+        # Only packed when rclone's safety guards require a manual --resync.
+        self.btn_resync = ctk.CTkButton(
+            self.action_frame,
+            text="Reparar (Resync)",
+            command=self._on_resync_requested,
+            fg_color="#E65100",
+            hover_color="#BF360C",
+            font=ctk.CTkFont(weight="bold"),
+            width=140
+        )
+
         self.btn_open_vault = ctk.CTkButton(
             self.action_frame,
             text="Abrir Vault",
@@ -801,7 +830,7 @@ class MainWindow(ctk.CTk):
             card = ctk.CTkFrame(self.history_frame, corner_radius=6, height=38)
             card.pack(fill="x", padx=4, pady=3)
 
-            ts_short = rec.timestamp.replace("T", " ").replace("Z", "")[:19]
+            ts_short = format_local_timestamp(rec.timestamp)
             ctk.CTkLabel(card, text=ts_short, width=150, anchor="w", font=ctk.CTkFont(size=12)).pack(side="left", padx=8)
             ctk.CTkLabel(card, text=rec.vault_name[:14], width=110, anchor="w", font=ctk.CTkFont(size=12)).pack(side="left", padx=4)
 
@@ -839,7 +868,7 @@ class MainWindow(ctk.CTk):
         if record is None:
             record = SyncRunRecord(
                 id=run_id,
-                timestamp=datetime.now(timezone.utc).isoformat(),
+                timestamp=datetime.now().astimezone().isoformat(),
                 vault_name=self.cfg.get_active_vault().name if hasattr(self.cfg, "get_active_vault") and self.cfg.get_active_vault() else "Principal",
                 status="SUCCESS",
                 duration_seconds=0.0,
@@ -885,7 +914,7 @@ class MainWindow(ctk.CTk):
             meta_frame.grid_columnconfigure(1, weight=1)
 
             rows = [
-                ("Fecha / Hora:", record.timestamp),
+                ("Fecha / Hora:", format_local_timestamp(record.timestamp)),
                 ("Perfil Vault:", record.vault_name),
                 ("Duración:", f"{record.duration_seconds:.2f} s"),
                 ("Datos transferidos:", format_byte_size(record.bytes_transferred)),
@@ -1171,6 +1200,100 @@ class MainWindow(ctk.CTk):
         if hasattr(self, "status_badge") and self.status_badge:
             self.status_badge.configure(text=f"● {msg}", text_color=color)
         self._append_log(msg)
+        self._update_resync_button()
+
+    def _update_resync_button(self) -> None:
+        """Show the recovery button only while rclone's guards block syncing or resync is running."""
+        btn = getattr(self, "btn_resync", None)
+        if btn is None:
+            return
+        try:
+            worker_syncing = getattr(self.worker, "_is_syncing", False)
+            needs_resync = getattr(self.worker, "needs_resync", False)
+
+            # If resync was active and sync has finished
+            if self._is_resyncing and not worker_syncing:
+                self._stop_resync_animation()
+
+            if needs_resync or self._is_resyncing:
+                btn.pack(side="left", padx=(0, 8), after=self.btn_sync_now)
+            else:
+                self._stop_resync_animation()
+                btn.pack_forget()
+        except Exception:
+            pass
+
+    def _start_resync_animation(self) -> None:
+        """Animate loading spinner on btn_resync while resync is running."""
+        self._is_resyncing = True
+        btn = getattr(self, "btn_resync", None)
+        if btn is not None:
+            try:
+                btn.configure(state="disabled", fg_color="#E65100")
+            except Exception:
+                pass
+        self._resync_anim_step = 0
+        self._animate_resync_button()
+
+    def _animate_resync_button(self) -> None:
+        """Spinner step animation."""
+        if not self._is_resyncing:
+            return
+        btn = getattr(self, "btn_resync", None)
+        if btn is not None:
+            spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+            frame = spinner_frames[self._resync_anim_step % len(spinner_frames)]
+            self._resync_anim_step += 1
+            try:
+                btn.configure(text=f"{frame} Reparando...")
+            except Exception:
+                pass
+        try:
+            self._resync_anim_after_id = self.after(120, self._animate_resync_button)
+        except Exception:
+            pass
+
+    def _stop_resync_animation(self) -> None:
+        """Stop spinner and restore resync button state."""
+        self._is_resyncing = False
+        if self._resync_anim_after_id is not None:
+            try:
+                self.after_cancel(self._resync_anim_after_id)
+            except Exception:
+                pass
+            self._resync_anim_after_id = None
+        btn = getattr(self, "btn_resync", None)
+        if btn is not None:
+            try:
+                btn.configure(text="Reparar (Resync)", state="normal", fg_color="#E65100")
+            except Exception:
+                pass
+
+    def _on_resync_requested(self) -> None:
+        """Ask for explicit confirmation, then run a one-time rclone --resync with live feedback."""
+        from tkinter import messagebox
+        try:
+            confirm = messagebox.askyesno(
+                "Reparar sincronización",
+                "rclone detuvo la sincronización por seguridad y necesita una resincronización (--resync).\n\n"
+                "Se combinarán los archivos de tu Vault local y de Google Drive:\n"
+                "• No se borrará ningún archivo.\n"
+                "• Los archivos que solo existan en un lado se copiarán al otro.\n"
+                "• Si un archivo difiere entre ambos lados, prevalecerá la versión local.\n\n"
+                "¿Deseas continuar?",
+                icon="warning",
+            )
+        except Exception:
+            # Never resync without an explicit confirmation.
+            return
+        if not confirm:
+            return
+        self._save_form()
+        if self.worker.request_resync():
+            self._start_resync_animation()
+            self._append_log("Resincronización (--resync) iniciada por el usuario. Por favor espera...")
+        else:
+            self._append_log("Sincronización en curso; intenta reparar de nuevo cuando termine.")
 
     def _append_log(self, text: str) -> None:
         """Append log line to visual log box."""

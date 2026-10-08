@@ -476,3 +476,73 @@ def test_gui_add_and_delete_vault():
 
 
 
+
+
+def _headless_window(tmp_path, worker):
+    from unittest.mock import patch
+    from src.gui.app_window import MainWindow
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    mock_cfg_mgr = MagicMock()
+    mock_cfg_mgr.load.return_value = ConfigData(local_vault_path=str(vault))
+    with patch("customtkinter.CTk.__init__", return_value=None):
+        return MainWindow(config_manager=mock_cfg_mgr, worker=worker, rclone_mgr=MagicMock())
+
+
+def test_resync_button_visible_only_when_guards_fire(tmp_path):
+    worker = MagicMock()
+    worker.needs_resync = False
+    win = _headless_window(tmp_path, worker)
+    win.btn_resync = MagicMock()
+
+    worker.needs_resync = True
+    win._apply_worker_update(SyncStatus.ERROR, "Guardas de seguridad activadas")
+    win.btn_resync.pack.assert_called_once()
+
+    worker.needs_resync = False
+    win._apply_worker_update(SyncStatus.SUCCESS, "ok")
+    win.btn_resync.pack_forget.assert_called()
+
+
+def test_resync_requires_confirmation(tmp_path):
+    from unittest.mock import patch
+
+    worker = MagicMock()
+    win = _headless_window(tmp_path, worker)
+
+    with patch("tkinter.messagebox.askyesno", return_value=False):
+        win._on_resync_requested()
+    worker.request_resync.assert_not_called()
+
+    with patch("tkinter.messagebox.askyesno", side_effect=RuntimeError("no display")):
+        win._on_resync_requested()
+    worker.request_resync.assert_not_called()
+
+    with patch("tkinter.messagebox.askyesno", return_value=True):
+        win._on_resync_requested()
+    worker.request_resync.assert_called_once()
+    assert win._is_resyncing is True
+
+
+def test_resync_animation_lifecycle(tmp_path):
+    worker = MagicMock()
+    worker.needs_resync = True
+    win = _headless_window(tmp_path, worker)
+    win.btn_resync = MagicMock()
+
+    # Start animation
+    win._start_resync_animation()
+    assert win._is_resyncing is True
+    win.btn_resync.configure.assert_called()
+
+    # Step animation
+    win._animate_resync_button()
+    assert "Reparando..." in str(win.btn_resync.configure.call_args)
+
+    # Worker finishes sync and resets flag
+    worker._is_syncing = False
+    worker.needs_resync = False
+    win._update_resync_button()
+    assert win._is_resyncing is False
+    win.btn_resync.pack_forget.assert_called()

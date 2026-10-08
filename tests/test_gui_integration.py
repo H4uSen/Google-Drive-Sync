@@ -28,7 +28,14 @@ from src.core.events import (
     ConflictPayload,
     BatchPayload,
 )
-from src.gui.app_window import MainWindow, STATUS_COLORS, HeadlessStub, HeadlessTabview, format_byte_size
+from src.gui.app_window import (
+    MainWindow,
+    STATUS_COLORS,
+    HeadlessStub,
+    HeadlessTabview,
+    format_byte_size,
+    format_local_timestamp,
+)
 
 
 @pytest.fixture
@@ -535,6 +542,29 @@ class TestHeadlessCompatibility:
         assert format_byte_size(1024 * 1024 * 5) == "5.0 MB"
         assert format_byte_size(1024 * 1024 * 1024 * 2) == "2.00 GB"
         assert format_byte_size("invalid") == "0 B"
+
+    def test_format_local_timestamp_helper(self):
+        # Empty and non-string inputs
+        assert format_local_timestamp("") == ""
+        assert format_local_timestamp(None) == ""
+
+        # UTC timestamp with Z converts to local
+        utc_z = "2026-10-08T03:28:56Z"
+        res_z = format_local_timestamp(utc_z)
+        assert len(res_z) == 19
+        assert "T" not in res_z
+        assert "Z" not in res_z
+
+        # UTC timestamp with +00:00 converts to local
+        utc_offset = "2026-10-08T03:28:56.104741+00:00"
+        res_offset = format_local_timestamp(utc_offset)
+        assert len(res_offset) == 19
+        assert "T" not in res_offset
+        assert "+" not in res_offset
+
+        # Fallback on non-standard timestamp
+        raw = "invalid-date-format-string"
+        assert format_local_timestamp(raw) == raw[:19]
 
     def test_execute_auth_process_success(self, test_env):
         with patch("customtkinter.CTk.__init__", return_value=None):

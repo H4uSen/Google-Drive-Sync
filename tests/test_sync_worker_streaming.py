@@ -393,3 +393,54 @@ class TestStreamingErrorBoundaries:
         statuses = [s for s, _ in notifications]
         assert SyncStatus.SYNCING in statuses
         assert SyncStatus.SUCCESS in statuses
+
+
+class TestManualResyncRecovery:
+    GUARD_LINES = [
+        "ERROR : Bisync critical error: cannot find prior Path1 or Path2 listings",
+        "ERROR : Bisync aborted. Must run --resync to recover.",
+    ]
+
+    def _worker(self, tmp_path):
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        cfg = ConfigData(local_vault_path=str(vault), remote_folder_name="vault", first_sync_done=True)
+        mock_rclone = MagicMock()
+        mock_rclone.build_bisync_command.return_value = ["mock_rclone"]
+        return SyncWorker(config=cfg, rclone_manager=mock_rclone), mock_rclone
+
+    def test_guard_abort_sets_needs_resync(self, tmp_path):
+        worker, _ = self._worker(tmp_path)
+        with patch("subprocess.Popen", return_value=MockStreamingPopen(self.GUARD_LINES, returncode=1)):
+            assert worker._execute_sync() is False
+        assert worker.needs_resync is True
+
+    def test_requested_resync_runs_once_and_clears_flag(self, tmp_path):
+        worker, mock_rclone = self._worker(tmp_path)
+        worker.needs_resync = True
+        worker._force_resync = True
+
+        with patch("subprocess.Popen", side_effect=lambda *a, **k: MockStreamingPopen(["ok"], returncode=0)):
+            assert worker._execute_sync() is True
+            assert worker._execute_sync() is True
+
+        resync_flags = [c.kwargs.get("resync") for c in mock_rclone.build_bisync_command.call_args_list]
+        assert resync_flags == [True, False]
+        assert worker.needs_resync is False
+
+    def test_request_resync_when_stopped_runs_in_background(self, tmp_path):
+        worker, mock_rclone = self._worker(tmp_path)
+        with patch("subprocess.Popen", side_effect=lambda *a, **k: MockStreamingPopen(["ok"], returncode=0)):
+            assert worker.request_resync() is True
+            deadline = time.time() + 5
+            while not mock_rclone.build_bisync_command.called and time.time() < deadline:
+                time.sleep(0.02)
+            while worker._sync_lock.locked() and time.time() < deadline:
+                time.sleep(0.02)
+        assert mock_rclone.build_bisync_command.call_args.kwargs.get("resync") is True
+
+    def test_request_resync_rejected_while_syncing(self, tmp_path):
+        worker, _ = self._worker(tmp_path)
+        worker._is_syncing = True
+        assert worker.request_resync() is False
+        assert worker._force_resync is False

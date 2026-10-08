@@ -181,6 +181,10 @@ class SyncWorker:
         self._wakeup_event = threading.Event()
         self.watcher: Optional[VaultWatcher] = None
         self._pending_sync = False
+        # True after rclone aborts with "Must run --resync"; cleared on next success.
+        self.needs_resync = False
+        # One-shot flag set only by an explicit user request (request_resync).
+        self._force_resync = False
 
     @property
     def event_dispatcher(self) -> EventDispatcher:
@@ -243,6 +247,20 @@ class SyncWorker:
         if self._is_syncing or self._sync_lock.locked() or self._paused:
             return False
         self._wakeup_event.set()
+        return True
+
+    def request_resync(self) -> bool:
+        """
+        Run the next sync with --resync, on explicit user confirmation only.
+        Used to recover after rclone's safety guards abort bisync.
+        """
+        if self._is_syncing or self._sync_lock.locked():
+            return False
+        self._force_resync = True
+        if self._running and not self._paused:
+            self._wakeup_event.set()
+        else:
+            threading.Thread(target=self._execute_sync, daemon=True).start()
         return True
 
     def cancel_sync(self):
@@ -553,7 +571,7 @@ class SyncWorker:
 
             record = SyncRunRecord(
                 id=run_id,
-                timestamp=datetime.now(timezone.utc).isoformat(),
+                timestamp=datetime.now().astimezone().isoformat(),
                 vault_name=vault_name,
                 status=status.upper(),
                 duration_seconds=round(max(0.0, float(duration)), 2),
@@ -649,13 +667,16 @@ class SyncWorker:
         self._notify(SyncStatus.SYNCING, "Sincronizando con Google Drive...")
         start_time = time.time()
         try:
+            force_resync, self._force_resync = self._force_resync, False
             self.rclone.ensure_remote_dir(self.config.remote_folder_name)
             if self._cancelled:
                 logger.info("Sincronización cancelada por el usuario antes de iniciar transferencia.")
                 self._notify(SyncStatus.IDLE, "Sincronización cancelada por el usuario")
                 self._record_sync_history("PARTIAL", time.time() - start_time, [], 0, "Sincronización cancelada por el usuario")
                 return False
-            resync = not self.config.first_sync_done
+            resync = force_resync or not self.config.first_sync_done
+            if force_resync:
+                logger.warning("Ejecutando --resync solicitado manualmente por el usuario.")
             cmd = self.rclone.build_bisync_command(
                 self.config.local_vault_path,
                 self.config.remote_folder_name,
@@ -672,6 +693,7 @@ class SyncWorker:
                     if "Must run --resync to recover" in err_text:
                         logger.warning("Rclone abortó por guardas de seguridad (posible borrado masivo o desincronización). No se ejecutará auto-resync.")
                         msg = "Guardas de seguridad activadas: Se requiere verificación manual antes de cualquier resincronización."
+                        self.needs_resync = True
                         self._notify(SyncStatus.ERROR, msg)
                         self._record_sync_history("ERROR", time.time() - start_time, [], 0, msg)
                         return False
@@ -695,8 +717,12 @@ class SyncWorker:
 
                 if ret != 0:
                     if "Must run --resync to recover" in output_text:
-                        logger.warning("Rclone abortó por guardas de seguridad. No se ejecutará auto-resync.")
+                        logger.warning(
+                            "Rclone abortó por guardas de seguridad. No se ejecutará auto-resync. Salida de rclone:\n%s",
+                            output_text[-4000:],
+                        )
                         msg = "Guardas de seguridad activadas: Se requiere verificación manual antes de cualquier resincronización."
+                        self.needs_resync = True
                         self._notify(SyncStatus.ERROR, msg)
                         self._record_sync_history("ERROR", time.time() - start_time, files_transferred, total_bytes, msg)
                         return False
@@ -727,7 +753,10 @@ class SyncWorker:
                 self._record_sync_history(status, elapsed, files_transferred, total_bytes, err_msg)
 
             self.config.first_sync_done = True
+            self.needs_resync = False
             self.last_sync_time = time.strftime("%H:%M:%S")
+            self.config.last_sync_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.config.last_sync_status = "success"
             self._notify(SyncStatus.SUCCESS, f"Sincronizado con éxito ({self.last_sync_time})")
             return True
         except subprocess.TimeoutExpired as te:
