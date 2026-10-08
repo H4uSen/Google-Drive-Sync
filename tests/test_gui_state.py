@@ -1,7 +1,7 @@
 """Tests for GUI state and event handling."""
 from unittest.mock import MagicMock
-from src.core.config import ConfigData
 from src.core.sync_worker import SyncStatus
+from tests.builders import vault_config
 
 def test_close_behavior_hides_instead_of_quits():
     mock_app = MagicMock()
@@ -27,14 +27,13 @@ def test_can_auto_start_sync_validation(tmp_path):
 
     vault = tmp_path / "valid_vault"
     vault.mkdir()
-    cfg = ConfigData(local_vault_path=str(vault))
+    cfg = vault_config(local_path=str(vault))
     mock_cfg_mgr = MagicMock()
-    mock_cfg_mgr.load.return_value = cfg
     mock_rclone = MagicMock()
     mock_rclone.is_remote_configured.return_value = True
 
     with patch("customtkinter.CTk.__init__", return_value=None):
-        win = MainWindow(config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=mock_rclone)
+        win = MainWindow(config=cfg, config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=mock_rclone)
         assert win.can_auto_start_sync() is True
 
         # Invalida si no hay conexión
@@ -43,20 +42,20 @@ def test_can_auto_start_sync_validation(tmp_path):
 
         # Invalida si la ruta está vacía
         mock_rclone.is_remote_configured.return_value = True
-        win.cfg.local_vault_path = ""
+        win.cfg.active_vault.local_path = ""
         assert win.can_auto_start_sync() is False
 
         # Invalida si la ruta no existe
-        win.cfg.local_vault_path = str(tmp_path / "nonexistent")
+        win.cfg.active_vault.local_path = str(tmp_path / "nonexistent")
         assert win.can_auto_start_sync() is False
 
         # Invalida si la ruta es la raíz del sistema
         root_path = Path("/").resolve()
-        win.cfg.local_vault_path = str(root_path)
+        win.cfg.active_vault.local_path = str(root_path)
         assert win.can_auto_start_sync() is False
 
         # Invalida si la ruta es el home del usuario
-        win.cfg.local_vault_path = str(Path.home())
+        win.cfg.active_vault.local_path = str(Path.home())
         assert win.can_auto_start_sync() is False
 
 def test_start_sync_engine(tmp_path):
@@ -65,16 +64,15 @@ def test_start_sync_engine(tmp_path):
 
     vault = tmp_path / "valid_vault"
     vault.mkdir()
-    cfg = ConfigData(local_vault_path=str(vault))
+    cfg = vault_config(local_path=str(vault))
     mock_cfg_mgr = MagicMock()
-    mock_cfg_mgr.load.return_value = cfg
     mock_worker = MagicMock()
     mock_worker._running = False
     mock_rclone = MagicMock()
     mock_rclone.is_remote_configured.return_value = True
 
     with patch("customtkinter.CTk.__init__", return_value=None):
-        win = MainWindow(config_manager=mock_cfg_mgr, worker=mock_worker, rclone_mgr=mock_rclone)
+        win = MainWindow(config=cfg, config_manager=mock_cfg_mgr, worker=mock_worker, rclone_mgr=mock_rclone)
         win.btn_toggle_sync = MagicMock()
         win.log_box = MagicMock()
 
@@ -103,11 +101,11 @@ def test_on_toggle_autostart_success():
     from src.gui.app_window import MainWindow
 
     mock_cfg_mgr = MagicMock()
-    mock_cfg_mgr.load.return_value = ConfigData()
+    cfg = vault_config()
 
     with patch("customtkinter.CTk.__init__", return_value=None), \
          patch("src.gui.app_window.set_autostart", return_value=True) as mock_set:
-        win = MainWindow(config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
+        win = MainWindow(config=cfg, config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
         win.chk_autostart = MagicMock()
         win.log_box = MagicMock()
 
@@ -129,12 +127,12 @@ def test_on_toggle_autostart_failure_reverts():
     from src.gui.app_window import MainWindow
 
     mock_cfg_mgr = MagicMock()
-    mock_cfg_mgr.load.return_value = ConfigData()
+    cfg = vault_config()
 
     with patch("customtkinter.CTk.__init__", return_value=None), \
          patch("src.gui.app_window.set_autostart", return_value=False), \
          patch("src.gui.app_window.is_autostart_enabled", return_value=False):
-        win = MainWindow(config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
+        win = MainWindow(config=cfg, config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
         win.chk_autostart = MagicMock()
         win.log_box = MagicMock()
 
@@ -151,16 +149,15 @@ def test_toggle_sync(tmp_path):
 
     vault = tmp_path / "valid_vault"
     vault.mkdir()
-    cfg = ConfigData(local_vault_path=str(vault))
+    cfg = vault_config(local_path=str(vault))
     mock_cfg_mgr = MagicMock()
-    mock_cfg_mgr.load.return_value = cfg
     mock_worker = MagicMock()
     mock_worker._running = False
     mock_rclone = MagicMock()
     mock_rclone.is_remote_configured.return_value = True
 
     with patch("customtkinter.CTk.__init__", return_value=None):
-        win = MainWindow(config_manager=mock_cfg_mgr, worker=mock_worker, rclone_mgr=mock_rclone)
+        win = MainWindow(config=cfg, config_manager=mock_cfg_mgr, worker=mock_worker, rclone_mgr=mock_rclone)
         win._save_form = MagicMock()
         win.start_sync_engine = MagicMock()
         win.btn_toggle_sync = MagicMock()
@@ -188,10 +185,10 @@ def test_build_ui_autostart_checkbox_selected():
         pytest.skip("DISPLAY not available")
 
     mock_cfg_mgr = MagicMock()
-    mock_cfg_mgr.load.return_value = ConfigData()
+    cfg = vault_config()
 
     with patch("src.gui.app_window.is_autostart_enabled", return_value=True):
-        win = MainWindow(config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
+        win = MainWindow(config=cfg, config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
         try:
             assert win.chk_autostart.get() == 1
         finally:
@@ -207,10 +204,10 @@ def test_build_ui_autostart_checkbox_deselected():
         pytest.skip("DISPLAY not available")
 
     mock_cfg_mgr = MagicMock()
-    mock_cfg_mgr.load.return_value = ConfigData()
+    cfg = vault_config()
 
     with patch("src.gui.app_window.is_autostart_enabled", return_value=False):
-        win = MainWindow(config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
+        win = MainWindow(config=cfg, config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
         try:
             assert win.chk_autostart.get() == 0
         finally:
@@ -226,9 +223,9 @@ def test_build_ui_realtime_controls_selected():
         pytest.skip("DISPLAY not available")
 
     mock_cfg_mgr = MagicMock()
-    mock_cfg_mgr.load.return_value = ConfigData(realtime_sync_enabled=True, debounce_delay_seconds=7)
+    cfg = vault_config(realtime_sync_enabled=True, debounce_delay_seconds=7)
 
-    win = MainWindow(config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
+    win = MainWindow(config=cfg, config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
     try:
         assert win.chk_realtime.get() == 1
         assert win.entry_debounce.get() == "7"
@@ -245,9 +242,9 @@ def test_build_ui_realtime_controls_deselected():
         pytest.skip("DISPLAY not available")
 
     mock_cfg_mgr = MagicMock()
-    mock_cfg_mgr.load.return_value = ConfigData(realtime_sync_enabled=False, debounce_delay_seconds=15)
+    cfg = vault_config(realtime_sync_enabled=False, debounce_delay_seconds=15)
 
-    win = MainWindow(config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
+    win = MainWindow(config=cfg, config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
     try:
         assert win.chk_realtime.get() == 0
         assert win.entry_debounce.get() == "15"
@@ -261,17 +258,16 @@ def test_gui_realtime_sync_form_persistence(tmp_path):
 
     vault = tmp_path / "valid_vault"
     vault.mkdir()
-    cfg = ConfigData(local_vault_path=str(vault), realtime_sync_enabled=True, debounce_delay_seconds=8)
+    cfg = vault_config(local_path=str(vault), realtime_sync_enabled=True, debounce_delay_seconds=8)
     mock_cfg_mgr = MagicMock()
-    mock_cfg_mgr.load.return_value = cfg
     mock_worker = MagicMock()
     mock_rclone = MagicMock()
 
     with patch("customtkinter.CTk.__init__", return_value=None):
-        win = MainWindow(config_manager=mock_cfg_mgr, worker=mock_worker, rclone_mgr=mock_rclone)
+        win = MainWindow(config=cfg, config_manager=mock_cfg_mgr, worker=mock_worker, rclone_mgr=mock_rclone)
         assert hasattr(win, "chk_realtime")
         assert hasattr(win, "entry_debounce")
-        assert win.cfg.debounce_delay_seconds == 8
+        assert win.cfg.active_vault.debounce_delay_seconds == 8
 
 def test_save_form_debounce_clamping_and_persistence(tmp_path):
     from unittest.mock import patch, MagicMock
@@ -279,15 +275,14 @@ def test_save_form_debounce_clamping_and_persistence(tmp_path):
 
     vault = tmp_path / "valid_vault"
     vault.mkdir()
-    cfg = ConfigData(local_vault_path=str(vault), realtime_sync_enabled=False, debounce_delay_seconds=5)
+    cfg = vault_config(local_path=str(vault), realtime_sync_enabled=False, debounce_delay_seconds=5)
     mock_cfg_mgr = MagicMock()
-    mock_cfg_mgr.load.return_value = cfg
     mock_worker = MagicMock()
     mock_worker._running = False
     mock_rclone = MagicMock()
 
     with patch("customtkinter.CTk.__init__", return_value=None):
-        win = MainWindow(config_manager=mock_cfg_mgr, worker=mock_worker, rclone_mgr=mock_rclone)
+        win = MainWindow(config=cfg, config_manager=mock_cfg_mgr, worker=mock_worker, rclone_mgr=mock_rclone)
         win.entry_interval = MagicMock()
         win.entry_interval.get.return_value = "5"
         win.entry_local = MagicMock()
@@ -301,25 +296,24 @@ def test_save_form_debounce_clamping_and_persistence(tmp_path):
         # Caso 1: valor normal dentro del rango (10)
         win.entry_debounce.get.return_value = "10"
         win._save_form()
-        assert win.cfg.debounce_delay_seconds == 10
-        assert win.cfg.realtime_sync_enabled is True
+        assert win.cfg.active_vault.debounce_delay_seconds == 10
+        assert win.cfg.active_vault.realtime_sync_enabled is True
         mock_cfg_mgr.save.assert_called_with(win.cfg)
-        assert mock_worker.config == win.cfg
 
         # Caso 2: valor menor a 1 se ajusta a 1
         win.entry_debounce.get.return_value = "0"
         win._save_form()
-        assert win.cfg.debounce_delay_seconds == 1
+        assert win.cfg.active_vault.debounce_delay_seconds == 1
 
         # Caso 3: valor mayor a 60 se ajusta a 60
         win.entry_debounce.get.return_value = "999"
         win._save_form()
-        assert win.cfg.debounce_delay_seconds == 60
+        assert win.cfg.active_vault.debounce_delay_seconds == 60
 
         # Caso 4: valor inválido usa 5 por defecto
         win.entry_debounce.get.return_value = "invalido"
         win._save_form()
-        assert win.cfg.debounce_delay_seconds == 5
+        assert win.cfg.active_vault.debounce_delay_seconds == 5
 
 def test_save_form_hot_reloads_watcher(tmp_path):
     from unittest.mock import patch, MagicMock
@@ -327,16 +321,15 @@ def test_save_form_hot_reloads_watcher(tmp_path):
 
     vault = tmp_path / "valid_vault"
     vault.mkdir()
-    cfg = ConfigData(local_vault_path=str(vault), realtime_sync_enabled=True, debounce_delay_seconds=5)
+    cfg = vault_config(local_path=str(vault), realtime_sync_enabled=True, debounce_delay_seconds=5)
     mock_cfg_mgr = MagicMock()
-    mock_cfg_mgr.load.return_value = cfg
     mock_worker = MagicMock()
     mock_worker._running = True
     mock_watcher = MagicMock()
     mock_worker.watcher = mock_watcher
 
     with patch("customtkinter.CTk.__init__", return_value=None):
-        win = MainWindow(config_manager=mock_cfg_mgr, worker=mock_worker, rclone_mgr=MagicMock())
+        win = MainWindow(config=cfg, config_manager=mock_cfg_mgr, worker=mock_worker, rclone_mgr=MagicMock())
         win.entry_interval = MagicMock()
         win.entry_interval.get.return_value = "5"
         win.entry_local = MagicMock()
@@ -376,7 +369,7 @@ def test_gui_storage_quota_display():
     from src.gui.app_window import MainWindow
 
     mock_cfg_mgr = MagicMock()
-    mock_cfg_mgr.load.return_value = ConfigData()
+    cfg = vault_config()
     mock_rclone = MagicMock()
     mock_rclone.is_remote_configured.return_value = True
     mock_rclone.get_storage_quota.return_value = {
@@ -391,7 +384,7 @@ def test_gui_storage_quota_display():
     }
 
     with patch("customtkinter.CTk.__init__", return_value=None):
-        win = MainWindow(config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=mock_rclone)
+        win = MainWindow(config=cfg, config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=mock_rclone)
         assert hasattr(win, "quota_bar")
         assert hasattr(win, "quota_label")
         win.quota_bar = MagicMock()
@@ -413,10 +406,9 @@ def test_gui_multi_vault_switching():
     v2 = VaultProfile(id="v2", name="Vault 2", local_path="/local/v2", remote_folder="Remote2")
     cfg = ConfigData(vaults=[v1, v2], active_vault_id="v1")
     mock_cfg_mgr = MagicMock()
-    mock_cfg_mgr.load.return_value = cfg
 
     with patch("customtkinter.CTk.__init__", return_value=None):
-        win = MainWindow(config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
+        win = MainWindow(config=cfg, config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
         assert hasattr(win, "vault_option_menu")
         win.entry_local = MagicMock()
         win.entry_remote = MagicMock()
@@ -440,10 +432,9 @@ def test_gui_add_and_delete_vault():
     v1 = VaultProfile(id="v1", name="Vault 1", local_path="/local/v1", remote_folder="Remote1")
     cfg = ConfigData(vaults=[v1], active_vault_id="v1")
     mock_cfg_mgr = MagicMock()
-    mock_cfg_mgr.load.return_value = cfg
 
     with patch("customtkinter.CTk.__init__", return_value=None):
-        win = MainWindow(config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
+        win = MainWindow(config=cfg, config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
         win.entry_local = MagicMock()
         win.entry_remote = MagicMock()
         win.entry_interval = MagicMock()
@@ -485,9 +476,9 @@ def _headless_window(tmp_path, worker):
     vault = tmp_path / "vault"
     vault.mkdir()
     mock_cfg_mgr = MagicMock()
-    mock_cfg_mgr.load.return_value = ConfigData(local_vault_path=str(vault))
+    cfg = vault_config(local_path=str(vault))
     with patch("customtkinter.CTk.__init__", return_value=None):
-        return MainWindow(config_manager=mock_cfg_mgr, worker=worker, rclone_mgr=MagicMock())
+        return MainWindow(config=cfg, config_manager=mock_cfg_mgr, worker=worker, rclone_mgr=MagicMock())
 
 
 def test_resync_button_visible_only_when_guards_fire(tmp_path):
@@ -546,3 +537,17 @@ def test_resync_animation_lifecycle(tmp_path):
     win._update_resync_button()
     assert win._is_resyncing is False
     win.btn_resync.pack_forget.assert_called()
+
+
+def test_window_uses_the_config_it_is_given_and_does_not_load_another(tmp_path):
+    from unittest.mock import patch
+    from src.gui.app_window import MainWindow
+
+    cfg = vault_config(str(tmp_path))
+    mock_cfg_mgr = MagicMock()
+
+    with patch("customtkinter.CTk.__init__", return_value=None):
+        win = MainWindow(config=cfg, config_manager=mock_cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
+
+    assert win.cfg is cfg
+    mock_cfg_mgr.load.assert_not_called()

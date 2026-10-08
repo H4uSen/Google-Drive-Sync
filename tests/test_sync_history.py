@@ -12,7 +12,7 @@ import pytest
 
 from src.core.history_manager import SyncHistoryManager, SyncRunRecord
 from src.core.sync_worker import SyncWorker
-from src.core.config import ConfigData
+from src.core.config import VaultProfile
 from src.utils.paths import get_history_file_path
 
 
@@ -712,6 +712,9 @@ class TestSyncHistoryManagerEdgeCases:
         assert read_rec.error_message == "No error 🎉"
 
 
+VAULT = VaultProfile(name="Principal")
+
+
 class TestSyncWorkerHistoryIntegration:
     """Integration tests verifying SyncWorker interaction with SyncHistoryManager."""
 
@@ -724,6 +727,7 @@ class TestSyncWorkerHistoryIntegration:
 
         worker = SyncWorker(config=MagicMock(), rclone_manager=MagicMock(), history_manager=hm)
         rec = worker._record_sync_history(
+            VAULT,
             status="SUCCESS",
             duration=1.45,
             files_transferred=["Daily/2026-10-03.md"],
@@ -747,10 +751,10 @@ class TestSyncWorkerHistoryIntegration:
 
         worker = SyncWorker(config=MagicMock(), rclone_manager=MagicMock(), history_manager=hm)
 
-        r1 = worker._record_sync_history("SUCCESS", 1.2, ["note1.md"], 512)
-        r2 = worker._record_sync_history("ERROR", 0.5, [], error_message="Network error")
-        r3 = worker._record_sync_history("CONFLICT", 2.1, ["conflict.md"], 1024)
-        r4 = worker._record_sync_history("PARTIAL", 3.0, ["p1.md", "p2.md"], 2048)
+        r1 = worker._record_sync_history(VAULT, "SUCCESS", 1.2, ["note1.md"], 512)
+        r2 = worker._record_sync_history(VAULT, "ERROR", 0.5, [], error_message="Network error")
+        r3 = worker._record_sync_history(VAULT, "CONFLICT", 2.1, ["conflict.md"], 1024)
+        r4 = worker._record_sync_history(VAULT, "PARTIAL", 3.0, ["p1.md", "p2.md"], 2048)
 
         assert r1 is not None and r2 is not None and r3 is not None and r4 is not None
         assert len(hm) == 4
@@ -762,43 +766,18 @@ class TestSyncWorkerHistoryIntegration:
     def test_record_sync_history_when_history_manager_is_none(self):
         """When history_manager is None, _record_sync_history safely returns None."""
         worker = SyncWorker(config=MagicMock(), rclone_manager=MagicMock(), history_manager=None)
-        res = worker._record_sync_history("SUCCESS", 1.0, ["file.md"])
+        res = worker._record_sync_history(VAULT, "SUCCESS", 1.0, ["file.md"])
         assert res is None
 
-    def test_record_sync_history_with_mock_config_safely_serializes(self, tmp_path):
-        """MagicMock attributes on config must not break JSON serialization of records."""
-        hist_file = tmp_path / "mock_config_history.json"
+    def test_record_sync_history_keeps_the_vault_name(self, tmp_path):
+        """The name of the Vault passed in is stored, stripped, and survives a reload."""
+        hist_file = tmp_path / "vault_name_history.json"
         hm = SyncHistoryManager(history_file=hist_file)
 
         worker = SyncWorker(config=MagicMock(), rclone_manager=MagicMock(), history_manager=hm)
-        rec = worker._record_sync_history("SUCCESS", 0.8, ["test.md"])
+        rec = worker._record_sync_history(VaultProfile(name="  ResearchNotes "), "SUCCESS", 2.0, ["paper.md"])
 
-        assert rec is not None
-        assert isinstance(rec.vault_name, str)
-        assert rec.vault_name == "Principal"
-        assert len(hm) == 1
-
-        # Re-read from disk to ensure valid JSON serialization
-        reloaded = SyncHistoryManager(history_file=hist_file)
-        assert len(reloaded) == 1
-        assert reloaded.get_recent_runs()[0].vault_name == "Principal"
-
-    def test_record_sync_history_with_real_config_vault_name(self, tmp_path):
-        """Real ConfigData active vault name is properly preserved in the history record."""
-        hist_file = tmp_path / "real_config_history.json"
-        hm = SyncHistoryManager(history_file=hist_file)
-
-        cfg = ConfigData(local_vault_path=str(tmp_path / "VaultPersonal"))
-        vault = cfg.add_vault("ResearchNotes", str(tmp_path / "VaultResearch"))
-        cfg.set_active_vault(vault.id)
-
-        worker = SyncWorker(config=cfg, rclone_manager=MagicMock(), history_manager=hm)
-        rec = worker._record_sync_history("SUCCESS", 2.0, ["paper.md"])
-
-        assert rec is not None
         assert rec.vault_name == "ResearchNotes"
-        assert len(hm) == 1
-
         reloaded = SyncHistoryManager(history_file=hist_file)
         assert reloaded.get_recent_runs()[0].vault_name == "ResearchNotes"
 
@@ -808,7 +787,7 @@ class TestSyncWorkerHistoryIntegration:
         hm = SyncHistoryManager(history_file=hist_file)
 
         worker = SyncWorker(config=MagicMock(), rclone_manager=MagicMock(), history_manager=hm)
-        rec = worker._record_sync_history("SUCCESS", 0.5, None)
+        rec = worker._record_sync_history(VAULT, "SUCCESS", 0.5, None)
 
         assert rec is not None
         assert rec.files_transferred == []

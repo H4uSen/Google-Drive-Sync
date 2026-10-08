@@ -15,9 +15,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests.e2e.conftest import require_feature, require_features
-from src.core.config import ConfigManager, ConfigData, VaultProfile
+from src.core.config import ConfigManager, VaultProfile
 from src.core.sync_worker import SyncWorker, SyncStatus
 from src.tray.tray_icon import TrayManager
+from tests.builders import vault_config
 
 
 # ============================================================================
@@ -160,7 +161,7 @@ def test_c03_large_batch_notification_pipeline(isolated_env):
 # ============================================================================
 def test_c04_tray_to_ui_sync(isolated_env, headless_gui):
     """C-04: Tray trigger initiates sync, propagating status updates to GUI."""
-    cfg = ConfigData(local_vault_path="/tmp/v", remote_folder_name="v")
+    cfg = vault_config(local_path="/tmp/v", remote_folder="v")
     mock_rclone = MagicMock()
     mock_rclone.is_remote_configured.return_value = True
     worker = SyncWorker(config=cfg, rclone_manager=mock_rclone)
@@ -170,10 +171,9 @@ def test_c04_tray_to_ui_sync(isolated_env, headless_gui):
 
     from src.gui.app_window import MainWindow
     cfg_mgr = MagicMock()
-    cfg_mgr.load.return_value = cfg
 
     with patch("customtkinter.CTk.__init__", return_value=None):
-        win = MainWindow(config_manager=cfg_mgr, worker=worker, rclone_mgr=mock_rclone)
+        win = MainWindow(config=cfg, config_manager=cfg_mgr, worker=worker, rclone_mgr=mock_rclone)
         win.status_badge = MagicMock()
         win.log_box = MagicMock()
         win.after = lambda delay, cb: cb()
@@ -200,7 +200,7 @@ def test_c05_tray_pause_watcher_coordination(isolated_env, tmp_path):
     """C-05: Pausing sync from tray suppresses watcher triggers until resumed."""
     vault = tmp_path / "vault"
     vault.mkdir()
-    cfg = ConfigData(local_vault_path=str(vault), remote_folder_name="v")
+    cfg = vault_config(local_path=str(vault), remote_folder="v")
     worker = SyncWorker(config=cfg, rclone_manager=MagicMock())
     tray = TrayManager(worker=worker, on_open_gui=MagicMock(), on_exit=MagicMock())
 
@@ -229,7 +229,7 @@ def test_c06_subprocess_failure_cascading(isolated_env, tmp_path):
     """C-06: Subprocess failure is caught by boundary, logged, and notified via tray."""
     vault = tmp_path / "vault"
     vault.mkdir()
-    cfg = ConfigData(local_vault_path=str(vault), remote_folder_name="v")
+    cfg = vault_config(local_path=str(vault), remote_folder="v")
     mock_rclone = MagicMock()
     mock_rclone.ensure_remote_dir.side_effect = subprocess.CalledProcessError(
         returncode=1, cmd=["rclone"], stderr="Fatal error: authentication token revoked"

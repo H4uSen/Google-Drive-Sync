@@ -12,9 +12,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests.e2e.conftest import require_feature, FEATURE_SPEC
-from src.core.config import ConfigManager, ConfigData, VaultProfile
+from src.core.config import ConfigManager, VaultProfile
 from src.core.sync_worker import SyncWorker, SyncStatus, COLOR_MAP
 from src.tray.tray_icon import TrayManager
+from tests.builders import vault_config
 
 
 # ============================================================================
@@ -30,7 +31,7 @@ def test_f01_tabbed_navigation(isolated_env, headless_gui):
     rclone = MagicMock()
 
     with patch("customtkinter.CTk.__init__", return_value=None):
-        win = MainWindow(config_manager=cfg_mgr, worker=worker, rclone_mgr=rclone)
+        win = MainWindow(config=cfg_mgr.load(), config_manager=cfg_mgr, worker=worker, rclone_mgr=rclone)
         assert hasattr(win, "tabview"), "MainWindow must have a tabview component"
         tabs = [win.tabview.tab("Configuración"), win.tabview.tab("Historial"), win.tabview.tab("Diagnósticos")]
         assert len(tabs) == 3
@@ -46,7 +47,7 @@ def test_f02_sync_progress_bar(isolated_env, headless_gui):
 
     cfg_mgr = ConfigManager()
     with patch("customtkinter.CTk.__init__", return_value=None):
-        win = MainWindow(config_manager=cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
+        win = MainWindow(config=cfg_mgr.load(), config_manager=cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
         assert hasattr(win, "sync_progress_bar"), "MainWindow must have a sync_progress_bar"
         win.set_sync_progress(0.75, "75%")
         assert win.sync_progress_bar.get() == pytest.approx(0.75, rel=1e-2)
@@ -62,7 +63,7 @@ def test_f03_active_file_indicator(isolated_env, headless_gui):
 
     cfg_mgr = ConfigManager()
     with patch("customtkinter.CTk.__init__", return_value=None):
-        win = MainWindow(config_manager=cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
+        win = MainWindow(config=cfg_mgr.load(), config_manager=cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
         assert hasattr(win, "active_file_label"), "MainWindow must have active_file_label"
         win.set_active_file("Notes/Daily.md")
         assert "Notes/Daily.md" in win.active_file_label.cget("text")
@@ -76,9 +77,9 @@ def test_f04_status_badges(isolated_env, headless_gui):
     from src.gui.app_window import MainWindow
 
     cfg_mgr = MagicMock()
-    cfg_mgr.load.return_value = ConfigData()
+    cfg_mgr.load.return_value = vault_config()
     with patch("customtkinter.CTk.__init__", return_value=None):
-        win = MainWindow(config_manager=cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
+        win = MainWindow(config=cfg_mgr.load(), config_manager=cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
         win.status_badge = MagicMock()
         win.log_box = MagicMock()
 
@@ -111,7 +112,7 @@ def test_f05_responsive_layout_theme(isolated_env, headless_gui):
 # ============================================================================
 def test_f06_responsive_ui_threading(isolated_env):
     """F-06: Non-blocking background worker keeps UI responsive during sync."""
-    cfg = ConfigData(local_vault_path="/tmp/test", remote_folder_name="ObsidianVault", sync_interval_minutes=2)
+    cfg = vault_config(local_path="/tmp/test", remote_folder="ObsidianVault", sync_interval_minutes=2)
     mock_rclone = MagicMock()
 
     worker = SyncWorker(config=cfg, rclone_manager=mock_rclone)
@@ -181,7 +182,7 @@ def test_f08_history_panel_ui(isolated_env, headless_gui):
 
     cfg_mgr = ConfigManager()
     with patch("customtkinter.CTk.__init__", return_value=None):
-        win = MainWindow(config_manager=cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
+        win = MainWindow(config=cfg_mgr.load(), config_manager=cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
         assert hasattr(win, "history_frame") or hasattr(win, "history_table")
         runs = win.get_displayed_history_records()
         assert isinstance(runs, list)
@@ -197,7 +198,7 @@ def test_f09_file_detail_inspection(isolated_env, headless_gui):
 
     cfg_mgr = ConfigManager()
     with patch("customtkinter.CTk.__init__", return_value=None):
-        win = MainWindow(config_manager=cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
+        win = MainWindow(config=cfg_mgr.load(), config_manager=cfg_mgr, worker=MagicMock(), rclone_mgr=MagicMock())
         details = win.show_transfer_details("sync_001")
         assert details is not None
 
@@ -323,7 +324,7 @@ def test_f15_tray_sync_now(isolated_env):
 # ============================================================================
 def test_f16_tray_pause_resume(isolated_env):
     """F-16: One-click sync pause and resume toggle from tray menu."""
-    cfg = ConfigData(local_vault_path="/tmp/v", remote_folder_name="v")
+    cfg = vault_config(local_path="/tmp/v", remote_folder="v")
     worker = SyncWorker(config=cfg, rclone_manager=MagicMock())
     tray = TrayManager(worker=worker, on_open_gui=MagicMock(), on_exit=MagicMock())
 
@@ -344,7 +345,7 @@ def test_f17_tray_open_vault(isolated_env, sample_vault):
     """F-17: One-click shortcut opening local vault folder via xdg-open/launcher."""
     require_feature("F-17")
     worker = MagicMock()
-    worker.config.local_vault_path = str(sample_vault)
+    worker.config.active_vault.local_path = str(sample_vault)
     tray = TrayManager(worker=worker, on_open_gui=MagicMock(), on_exit=MagicMock())
 
     with patch("subprocess.Popen") as mock_popen:
@@ -453,7 +454,7 @@ def test_f24_streaming_subprocess(isolated_env, sample_vault):
     progress = []
     dispatcher.subscribe(EventType.PROGRESS_UPDATED, lambda ev: progress.append(ev.data.percentage))
 
-    cfg = ConfigData(local_vault_path=str(sample_vault), remote_folder_name="v", first_sync_done=True)
+    cfg = vault_config(local_path=str(sample_vault), remote_folder="v", first_sync_done=True)
     worker = SyncWorker(
         config=cfg,
         rclone_manager=stub_rclone(),
@@ -498,7 +499,7 @@ def test_f26_error_boundaries(isolated_env, tmp_path):
     """F-26: Exception boundaries prevent thread crashes from terminating worker."""
     vault = tmp_path / "vault"
     vault.mkdir()
-    cfg = ConfigData(local_vault_path=str(vault), remote_folder_name="v")
+    cfg = vault_config(local_path=str(vault), remote_folder="v")
     mock_rclone = MagicMock()
     mock_rclone.ensure_remote_dir.side_effect = RuntimeError("Simulated unhandled process crash")
 

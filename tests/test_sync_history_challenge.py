@@ -3,22 +3,23 @@ Empirical Adversarial Challenge Suite for Milestone 2 Iteration 2.
 Evaluates SyncWorker history recording and SyncHistoryManager truthiness:
 1. Empty history recording across multiple sequential and concurrent sync runs and statuses.
 2. Boolean truthiness of SyncHistoryManager and GuiLogHandler across states (empty, populated, cleared, corrupted).
-3. Config mock and None edge cases (None, MagicMock, hostile types, exception-raising attributes).
-4. Defensive boundaries and resilience under manager persistence failures.
+3. Defensive boundaries and resilience under manager persistence failures.
 """
 from __future__ import annotations
 
 import json
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import MagicMock
 
-import pytest
 
-from src.core.config import ConfigData
+from src.core.config import VaultProfile
 from src.core.history_manager import SyncHistoryManager, SyncRunRecord
 from src.core.sync_worker import SyncStatus, SyncWorker
 from src.utils.log_handler import GuiLogHandler
+from tests.builders import vault_config
+
+VAULT = VaultProfile(name="Principal")
 
 
 class TestEmptyHistoryRecordingLifecycle:
@@ -47,7 +48,7 @@ class TestEmptyHistoryRecordingLifecycle:
         ]
 
         for i, (st, dur, files, b_trans, err) in enumerate(statuses, start=1):
-            rec = worker._record_sync_history(st, dur, files, b_trans, err)
+            rec = worker._record_sync_history(VAULT, st, dur, files, b_trans, err)
             assert rec is not None, f"Run {i} returned None for status {st}"
             assert rec.status == st
             assert rec.duration_seconds == dur
@@ -78,7 +79,7 @@ class TestEmptyHistoryRecordingLifecycle:
 
         # Phase 1: Record 3 runs
         for i in range(3):
-            rec = worker._record_sync_history("SUCCESS", 1.0, [f"f_{i}.md"])
+            rec = worker._record_sync_history(VAULT, "SUCCESS", 1.0, [f"f_{i}.md"])
             assert rec is not None
         assert len(hm) == 3
 
@@ -89,7 +90,7 @@ class TestEmptyHistoryRecordingLifecycle:
         assert json.loads(hist_file.read_text(encoding="utf-8")) == []
 
         # Phase 3: Record immediately following clear
-        rec_post_clear = worker._record_sync_history("SUCCESS", 2.0, ["after_clear.md"])
+        rec_post_clear = worker._record_sync_history(VAULT, "SUCCESS", 2.0, ["after_clear.md"])
         assert rec_post_clear is not None
         assert len(hm) == 1
         assert bool(hm) is True
@@ -117,6 +118,7 @@ class TestEmptyHistoryRecordingLifecycle:
                 for i in range(runs_per_thread):
                     status = statuses[(thread_id + i) % 4]
                     rec = worker._record_sync_history(
+                        VAULT,
                         status=status,
                         duration=float(i) * 0.1,
                         files_transferred=[f"t{thread_id}_f{i}.md"],
@@ -147,9 +149,8 @@ class TestEmptyHistoryRecordingLifecycle:
         hm = SyncHistoryManager(history_file=hist_file)
         assert len(hm) == 0
 
-        # Subcase A: Missing local_vault_path
-        cfg = MagicMock()
-        cfg.local_vault_path = ""
+        # Subcase A: Missing vault path
+        cfg = vault_config("")
         worker = SyncWorker(config=cfg, rclone_manager=MagicMock(), history_manager=hm)
         ok = worker._execute_sync()
         assert ok is False
@@ -159,7 +160,7 @@ class TestEmptyHistoryRecordingLifecycle:
         assert "no configurada" in (rec1.error_message or "")
 
         # Subcase B: Non-existent vault directory
-        cfg.local_vault_path = str(tmp_path / "nonexistent_dir_12345")
+        cfg.active_vault.local_path = str(tmp_path / "nonexistent_dir_12345")
         ok = worker._execute_sync()
         assert ok is False
         assert len(hm) == 2
@@ -232,162 +233,8 @@ class TestBooleanTruthinessSemantics:
         assert (not glh or "expected") == "expected"
 
 
-class TestConfigMockAndNoneEdgeCases:
-    """Group 3: Tests config=None, MagicMock attributes, hostile types, and exceptions."""
-
-    def test_config_is_none(self, tmp_path):
-        """When worker.config is None, _record_sync_history defaults vault_name without failing."""
-        hist_file = tmp_path / "config_none.json"
-        hm = SyncHistoryManager(history_file=hist_file)
-
-        worker = SyncWorker(config=None, rclone_manager=MagicMock(), history_manager=hm)
-        rec = worker._record_sync_history("SUCCESS", 1.2, ["file.md"], 100)
-
-        assert rec is not None
-        assert rec.vault_name == "Principal"
-        assert len(hm) == 1
-
-        reloaded = SyncHistoryManager(history_file=hist_file)
-        assert reloaded.get_recent_runs()[0].vault_name == "Principal"
-
-    def test_config_is_raw_magicmock(self, tmp_path):
-        """Raw MagicMock config must not leak child MagicMocks into vault_name."""
-        hist_file = tmp_path / "config_raw_mock.json"
-        hm = SyncHistoryManager(history_file=hist_file)
-
-        mock_cfg = MagicMock()
-        # In a raw MagicMock, mock_cfg.active_vault is a MagicMock, and active_vault.name is a MagicMock
-        assert isinstance(mock_cfg.active_vault.name, MagicMock)
-
-        worker = SyncWorker(config=mock_cfg, rclone_manager=MagicMock(), history_manager=hm)
-        rec = worker._record_sync_history("SUCCESS", 1.0, ["file.md"])
-
-        assert rec is not None
-        assert isinstance(rec.vault_name, str)
-        assert rec.vault_name == "Principal"
-        assert len(hm) == 1
-
-        # Verify disk JSON can be parsed cleanly
-        raw = json.loads(hist_file.read_text(encoding="utf-8"))
-        assert raw[0]["vault_name"] == "Principal"
-
-    @pytest.mark.parametrize(
-        "hostile_name",
-        [
-            12345,
-            3.14159,
-            None,
-            [],
-            {},
-            object(),
-            "",
-            "   ",
-            b"bytes_name",
-        ],
-    )
-    def test_config_hostile_active_vault_name_types(self, hostile_name, tmp_path):
-        """Non-string active_vault.name types safely fall back to 'Principal'."""
-        hist_file = tmp_path / "hostile_types.json"
-        hm = SyncHistoryManager(history_file=hist_file)
-
-        mock_vault = MagicMock()
-        mock_vault.name = hostile_name
-
-        mock_cfg = MagicMock()
-        mock_cfg.active_vault = mock_vault
-        mock_cfg.get_active_vault = None
-
-        worker = SyncWorker(config=mock_cfg, rclone_manager=MagicMock(), history_manager=hm)
-        rec = worker._record_sync_history("SUCCESS", 1.0, ["test.md"])
-
-        assert rec is not None
-        assert rec.vault_name == "Principal"
-        assert len(hm) == 1
-
-    def test_config_whitespace_vault_name_stripped(self, tmp_path):
-        """Valid string vault name with leading/trailing whitespace is cleanly stripped."""
-        hist_file = tmp_path / "whitespace_vault.json"
-        hm = SyncHistoryManager(history_file=hist_file)
-
-        mock_vault = MagicMock()
-        mock_vault.name = "  My Obsidian Notes   "
-
-        mock_cfg = MagicMock()
-        mock_cfg.active_vault = mock_vault
-
-        worker = SyncWorker(config=mock_cfg, rclone_manager=MagicMock(), history_manager=hm)
-        rec = worker._record_sync_history("SUCCESS", 1.0, ["test.md"])
-
-        assert rec is not None
-        assert rec.vault_name == "My Obsidian Notes"
-
-    def test_config_fallback_to_callable_get_active_vault(self, tmp_path):
-        """When active_vault is None or invalid, falls back to get_active_vault()."""
-        hist_file = tmp_path / "fallback_get_active.json"
-        hm = SyncHistoryManager(history_file=hist_file)
-
-        mock_vault = MagicMock()
-        mock_vault.name = "SecondaryVault"
-
-        mock_cfg = MagicMock()
-        mock_cfg.active_vault = None
-        mock_cfg.get_active_vault.return_value = mock_vault
-
-        worker = SyncWorker(config=mock_cfg, rclone_manager=MagicMock(), history_manager=hm)
-        rec = worker._record_sync_history("SUCCESS", 1.0, ["test.md"])
-
-        assert rec is not None
-        assert rec.vault_name == "SecondaryVault"
-
-    def test_config_attribute_access_raising_exceptions(self, tmp_path):
-        """Exceptions raised during config inspection are caught and fall back to 'Principal'."""
-        hist_file = tmp_path / "config_exception.json"
-        hm = SyncHistoryManager(history_file=hist_file)
-
-        # Subcase A: active_vault property raises RuntimeError
-        class ExplodingConfig1:
-            @property
-            def active_vault(self):
-                raise RuntimeError("Exploding active_vault property")
-
-        worker1 = SyncWorker(config=ExplodingConfig1(), rclone_manager=MagicMock(), history_manager=hm)
-        rec1 = worker1._record_sync_history("SUCCESS", 1.0, ["f1.md"])
-        assert rec1 is not None
-        assert rec1.vault_name == "Principal"
-
-        # Subcase B: get_active_vault raises Exception
-        class ExplodingConfig2:
-            active_vault = None
-
-            def get_active_vault(self):
-                raise ValueError("Exploding get_active_vault method")
-
-        worker2 = SyncWorker(config=ExplodingConfig2(), rclone_manager=MagicMock(), history_manager=hm)
-        rec2 = worker2._record_sync_history("SUCCESS", 1.0, ["f2.md"])
-        assert rec2 is not None
-        assert rec2.vault_name == "Principal"
-
-    @pytest.mark.parametrize("primitive_config", ["string_cfg", 999, [1, 2, 3], {"a": 1}])
-    def test_config_primitive_types_handled_safely(self, primitive_config, tmp_path):
-        """Primitive types passed as config fall back to 'Principal' cleanly."""
-        hist_file = tmp_path / "primitive_cfg.json"
-        hm = SyncHistoryManager(history_file=hist_file)
-
-        worker = SyncWorker(config=primitive_config, rclone_manager=MagicMock(), history_manager=hm)
-        rec = worker._record_sync_history("SUCCESS", 0.5, ["note.md"])
-
-        assert rec is not None
-        assert rec.vault_name == "Principal"
-
-    def test_history_manager_is_none_returns_none(self):
-        """When history_manager is None, _record_sync_history returns None safely."""
-        worker = SyncWorker(config=MagicMock(), rclone_manager=MagicMock(), history_manager=None)
-        res = worker._record_sync_history("SUCCESS", 1.0, ["f.md"])
-        assert res is None
-
-
 class TestDefensiveBoundariesAndResilience:
-    """Group 4: Tests exception suppression and argument coercion."""
+    """Group 3: Tests exception suppression and argument coercion."""
 
     def test_record_sync_history_catches_manager_exceptions(self):
         """Exceptions thrown inside history_manager.record_run are swallowed without disrupting worker."""
@@ -395,7 +242,7 @@ class TestDefensiveBoundariesAndResilience:
         broken_hm.record_run.side_effect = IOError("Disk full or permission denied")
 
         worker = SyncWorker(config=MagicMock(), rclone_manager=MagicMock(), history_manager=broken_hm)
-        res = worker._record_sync_history("SUCCESS", 1.0, ["file.md"])
+        res = worker._record_sync_history(VAULT, "SUCCESS", 1.0, ["file.md"])
 
         assert res is None, "Expected None return when manager throws"
         broken_hm.record_run.assert_called_once()
@@ -407,18 +254,18 @@ class TestDefensiveBoundariesAndResilience:
         worker = SyncWorker(config=MagicMock(), rclone_manager=MagicMock(), history_manager=hm)
 
         # 1. Negative duration clamped to 0.0
-        r1 = worker._record_sync_history("success", -5.5, ("file_a.md", "file_b.md"), 100)
+        r1 = worker._record_sync_history(VAULT, "success", -5.5, ("file_a.md", "file_b.md"), 100)
         assert r1.status == "SUCCESS"
         assert r1.duration_seconds == 0.0
         assert r1.files_transferred == ["file_a.md", "file_b.md"]
 
         # 2. None files_transferred coerced to []
-        r2 = worker._record_sync_history("error", 2.0, None)
+        r2 = worker._record_sync_history(VAULT, "error", 2.0, None)
         assert r2.status == "ERROR"
         assert r2.files_transferred == []
 
         # 3. Large duration and large byte count
-        r3 = worker._record_sync_history("PARTIAL", 86400.123, ["huge.iso"], 10**11)
+        r3 = worker._record_sync_history(VAULT, "PARTIAL", 86400.123, ["huge.iso"], 10**11)
         assert r3.duration_seconds == 86400.12
         assert r3.bytes_transferred == 10**11
 
@@ -431,6 +278,7 @@ class TestDefensiveBoundariesAndResilience:
         assert len(hm) == 0
         for i in range(100):
             rec = worker._record_sync_history(
+                VAULT,
                 status="SUCCESS",
                 duration=float(i) * 0.05,
                 files_transferred=[f"churn_{i}.md"],
@@ -460,7 +308,7 @@ class TestDefensiveBoundariesAndResilience:
                 for j in range(30):
                     if stop_event.is_set():
                         break
-                    worker._record_sync_history("SUCCESS", 0.1, [f"rec_{idx}_{j}.md"])
+                    worker._record_sync_history(VAULT, "SUCCESS", 0.1, [f"rec_{idx}_{j}.md"])
             except Exception as e:
                 errors.append(e)
 
@@ -501,6 +349,7 @@ class TestDefensiveBoundariesAndResilience:
         huge_error = "FATAL ERROR: " + ("A" * 100000)
 
         rec = worker._record_sync_history(
+            VAULT,
             status="ERROR",
             duration=45.67,
             files_transferred=massive_files,
@@ -519,51 +368,3 @@ class TestDefensiveBoundariesAndResilience:
         assert len(loaded_rec.files_transferred) == 2000
         assert loaded_rec.error_message == huge_error
         assert loaded_rec.bytes_transferred == 1024**3
-
-    def test_dynamic_vault_switching_in_worker(self, tmp_path):
-        """Worker properly preserves vault names when active vault changes dynamically."""
-        hist_file = tmp_path / "dynamic_vaults.json"
-        hm = SyncHistoryManager(history_file=hist_file)
-
-        cfg = ConfigData(local_vault_path=str(tmp_path / "V1"))
-        v2 = cfg.add_vault("SecondVault", str(tmp_path / "V2"))
-        v3 = cfg.add_vault("ThirdVault", str(tmp_path / "V3"))
-
-        worker = SyncWorker(config=cfg, rclone_manager=MagicMock(), history_manager=hm)
-
-        # Default active vault is Principal
-        r1 = worker._record_sync_history("SUCCESS", 1.0, ["v1.md"])
-        assert r1.vault_name == "Principal"
-
-        # Switch to SecondVault
-        cfg.set_active_vault(v2.id)
-        r2 = worker._record_sync_history("SUCCESS", 1.0, ["v2.md"])
-        assert r2.vault_name == "SecondVault"
-
-        # Switch to ThirdVault
-        cfg.set_active_vault(v3.id)
-        r3 = worker._record_sync_history("SUCCESS", 1.0, ["v3.md"])
-        assert r3.vault_name == "ThirdVault"
-
-        assert len(hm) == 3
-        runs = hm.get_recent_runs()
-        assert [r.vault_name for r in runs] == ["ThirdVault", "SecondVault", "Principal"]
-
-    def test_falsy_config_instance_falls_back_cleanly(self, tmp_path):
-        """A config object whose __bool__ evaluates to False safely falls back to 'Principal'."""
-        hist_file = tmp_path / "falsy_config.json"
-        hm = SyncHistoryManager(history_file=hist_file)
-
-        class FalsyConfig:
-            def __bool__(self):
-                return False
-
-            active_vault = MagicMock()
-
-        worker = SyncWorker(config=FalsyConfig(), rclone_manager=MagicMock(), history_manager=hm)
-        rec = worker._record_sync_history("SUCCESS", 1.0, ["falsy.md"])
-
-        assert rec is not None
-        assert rec.vault_name == "Principal"
-        assert len(hm) == 1
-

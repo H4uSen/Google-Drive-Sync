@@ -102,7 +102,7 @@ class TrayManager:
             self.worker.pause()
 
     def open_vault_folder(self):
-        path = getattr(getattr(self.worker, "config", None), "local_vault_path", "")
+        path = self.worker.config.active_vault.local_path
         if not path:
             return
         try:

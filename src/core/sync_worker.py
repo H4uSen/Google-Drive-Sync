@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Callable, Optional, List
 
-from src.core.config import ConfigData
+from src.core.config import ConfigData, VaultProfile
 from src.core.rclone_manager import RcloneManager
 from src.utils.paths import get_filters_file_path
 from src.core.sync_run import (
@@ -173,7 +173,7 @@ class SyncWorker:
         # Modern EventDispatcher pub/sub
         if self.dispatcher and hasattr(self.dispatcher, "emit"):
             try:
-                vault_path = self.config.local_vault_path if self.config else None
+                vault_path = self.config.active_vault.local_path if self.config else None
                 self.dispatcher.emit(
                     EventType.STATUS_CHANGED,
                     StatusPayload(status=status, message=msg, vault_name=vault_path)
@@ -227,6 +227,7 @@ class SyncWorker:
 
     def _record_sync_history(
         self,
+        vault: VaultProfile,
         status: str,
         duration: float,
         files_transferred: List[str],
@@ -240,27 +241,10 @@ class SyncWorker:
         if self.history_manager is None:
             return None
         try:
-            run_id = f"sync_{uuid.uuid4().hex[:8]}"
-            vault_name = "Principal"
-            if self.config:
-                try:
-                    active = getattr(self.config, "active_vault", None)
-                    if not active or not isinstance(getattr(active, "name", None), str):
-                        if callable(getattr(self.config, "get_active_vault", None)):
-                            cand = self.config.get_active_vault()
-                            if isinstance(getattr(cand, "name", None), str):
-                                active = cand
-                    if active:
-                        raw_name = getattr(active, "name", None)
-                        if isinstance(raw_name, str) and raw_name.strip():
-                            vault_name = raw_name.strip()
-                except Exception:
-                    vault_name = "Principal"
-
             record = SyncRunRecord(
-                id=run_id,
+                id=f"sync_{uuid.uuid4().hex[:8]}",
                 timestamp=datetime.now().astimezone().isoformat(),
-                vault_name=vault_name,
+                vault_name=vault.name.strip() or "Principal",
                 status=status.upper(),
                 duration_seconds=round(max(0.0, float(duration)), 2),
                 files_transferred=list(files_transferred) if files_transferred else [],
@@ -288,23 +272,32 @@ class SyncWorker:
             self._current_run = run
         return run
 
-    def _fail(self, status: str, message: str, start_time: float, result: Optional[SyncRunResult] = None) -> bool:
+    def _fail(
+        self,
+        vault: VaultProfile,
+        status: str,
+        message: str,
+        start_time: float,
+        result: Optional[SyncRunResult] = None,
+    ) -> bool:
         files = result.files if result else []
         total_bytes = result.total_bytes if result else 0
-        self._record_sync_history(status, time.time() - start_time, files, total_bytes, message)
+        self._record_sync_history(vault, status, time.time() - start_time, files, total_bytes, message)
         return False
 
     def _execute_sync(self) -> bool:
-        if not self.config.local_vault_path or not self.config.local_vault_path.strip():
+        # The Vault being synced, fixed for the whole Sync run even if the user switches Vault meanwhile.
+        vault = self.config.active_vault
+        if not vault.local_path or not vault.local_path.strip():
             self._notify(SyncStatus.ERROR, "Ruta de vault no configurada")
-            self._record_sync_history("ERROR", 0.0, [], 0, "Ruta de vault no configurada")
+            self._record_sync_history(vault, "ERROR", 0.0, [], 0, "Ruta de vault no configurada")
             return False
 
-        vault_path = Path(self.config.local_vault_path.strip()).resolve()
+        vault_path = Path(vault.local_path.strip()).resolve()
         if not vault_path.is_dir():
-            msg = f"Ruta de vault inválida o no existe: {self.config.local_vault_path}"
+            msg = f"Ruta de vault inválida o no existe: {vault.local_path}"
             self._notify(SyncStatus.ERROR, msg)
-            self._record_sync_history("ERROR", 0.0, [], 0, msg)
+            self._record_sync_history(vault, "ERROR", 0.0, [], 0, msg)
             return False
 
         if not self._sync_lock.acquire(blocking=False):
@@ -319,13 +312,13 @@ class SyncWorker:
             if force_resync:
                 logger.warning("Ejecutando --resync solicitado manualmente por el usuario.")
             request = SyncRequest(
-                local_path=self.config.local_vault_path,
-                remote_folder=self.config.remote_folder_name,
-                resync=force_resync or not self.config.first_sync_done,
+                local_path=vault.local_path,
+                remote_folder=vault.remote_folder,
+                resync=force_resync or not vault.first_sync_done,
                 timeout=self.run_timeout,
             )
             run = self._new_run(request)
-            self.rclone.ensure_remote_dir(self.config.remote_folder_name)
+            self.rclone.ensure_remote_dir(vault.remote_folder)
             result = run.execute()
 
             if not result.ok and not result.cancelled and not result.timed_out:
@@ -337,7 +330,7 @@ class SyncWorker:
                     msg = "Guardas de seguridad activadas: Se requiere verificación manual antes de cualquier resincronización."
                     self.needs_resync = True
                     self._notify(SyncStatus.ERROR, msg)
-                    return self._fail("ERROR", msg, start_time, result)
+                    return self._fail(vault, "ERROR", msg, start_time, result)
                 if try_recover_stale_lock(result.output):
                     logger.info("Reintentando sincronización tras limpiar lock huérfano...")
                     result = self._new_run(request).execute()
@@ -346,19 +339,19 @@ class SyncWorker:
                 logger.info("Sincronización cancelada por el usuario.")
                 msg = "Sincronización cancelada por el usuario"
                 self._notify(SyncStatus.IDLE, msg)
-                return self._fail("PARTIAL" if result.files or result.returncode is None else "ERROR", msg, start_time, result)
+                return self._fail(vault, "PARTIAL" if result.files or result.returncode is None else "ERROR", msg, start_time, result)
 
             if result.timed_out:
                 logger.error(f"Sincronización cancelada por exceso de tiempo (timeout de {self.run_timeout}s)")
                 msg = "Tiempo de espera agotado al sincronizar con Google Drive"
                 self._notify(SyncStatus.ERROR, msg)
-                return self._fail("ERROR", msg, start_time, result)
+                return self._fail(vault, "ERROR", msg, start_time, result)
 
             if not result.ok:
                 logger.error(f"Rclone error ({result.returncode}): {result.output}")
                 summary = clean_error_message(result.output) if result.output else "Error en proceso rclone"
                 self._notify(SyncStatus.ERROR, f"Fallo de sincronización: {summary[:120]}")
-                return self._fail("PARTIAL" if result.files else "ERROR", summary, start_time, result)
+                return self._fail(vault, "PARTIAL" if result.files else "ERROR", summary, start_time, result)
 
             elapsed = time.time() - start_time
             if self.dispatcher and hasattr(self.dispatcher, "emit"):
@@ -374,19 +367,19 @@ class SyncWorker:
                 )
             status = "CONFLICT" if result.conflicts else "SUCCESS"
             err_msg = f"Bisync conflict detected ({len(result.conflicts)} files)" if result.conflicts else None
-            self._record_sync_history(status, elapsed, result.files, result.total_bytes, err_msg)
+            self._record_sync_history(vault, status, elapsed, result.files, result.total_bytes, err_msg)
 
-            self.config.first_sync_done = True
+            vault.first_sync_done = True
             self.needs_resync = False
             self.last_sync_time = time.strftime("%H:%M:%S")
-            self.config.last_sync_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            self.config.last_sync_status = "success"
+            vault.last_sync_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            vault.last_sync_status = "success"
             self._notify(SyncStatus.SUCCESS, f"Sincronizado con éxito ({self.last_sync_time})")
             return True
         except Exception as e:
             logger.error(f"Sync execution error: {e}")
             self._notify(SyncStatus.ERROR, f"Error: {str(e)}")
-            return self._fail("ERROR", str(e), start_time, result)
+            return self._fail(vault, "ERROR", str(e), start_time, result)
         finally:
             with self._run_lock:
                 self._current_run = None
@@ -408,7 +401,7 @@ class SyncWorker:
                 self._notify(SyncStatus.ERROR, f"Error interno en motor de sincronización: {loop_err}")
                 time.sleep(5)
 
-            interval_sec = max(60, self.config.sync_interval_minutes * 60)
+            interval_sec = max(60, self.config.active_vault.sync_interval_minutes * 60)
             try:
                 triggered = self._wakeup_event.wait(timeout=interval_sec)
                 if triggered:
@@ -421,12 +414,13 @@ class SyncWorker:
         if self._running:
             return
         self._running = True
-        if self.config.realtime_sync_enabled and self.config.local_vault_path:
+        vault = self.config.active_vault
+        if vault.realtime_sync_enabled and vault.local_path:
             self.watcher = VaultWatcher(
                 callback=self._on_watcher_change,
-                debounce_seconds=getattr(self.config, "debounce_delay_seconds", 5),
+                debounce_seconds=vault.debounce_delay_seconds,
             )
-            self.watcher.start(self.config.local_vault_path)
+            self.watcher.start(vault.local_path)
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
 

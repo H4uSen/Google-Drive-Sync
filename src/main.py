@@ -60,7 +60,7 @@ def main():
     rclone_mgr = RcloneManager()
     worker = SyncWorker(config=cfg, rclone_manager=rclone_mgr)
 
-    app = MainWindow(config_manager=config_mgr, worker=worker, rclone_mgr=rclone_mgr)
+    app = MainWindow(config=cfg, config_manager=config_mgr, worker=worker, rclone_mgr=rclone_mgr)
 
     def on_open_gui():
         app.after(0, app.deiconify)

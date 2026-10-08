@@ -8,10 +8,11 @@ import time
 
 import pytest
 
-from src.core.config import ConfigData
+from src.core.config import VaultProfile
 from src.core.events import EventDispatcher, EventType
 from src.core.history_manager import SyncHistoryManager
 from src.core.sync_worker import SyncStatus, SyncWorker, clean_error_message, try_recover_stale_lock
+from tests.builders import vault_config
 from tests.fakes import FakeLauncher, FakeProcess, stub_rclone
 
 GUARD_LINES = [
@@ -27,11 +28,7 @@ class Engine:
         vault = tmp_path / "vault"
         vault.mkdir(exist_ok=True)
         self.vault = vault
-        self.config = ConfigData(
-            local_vault_path=str(vault),
-            remote_folder_name=remote_folder,
-            first_sync_done=first_sync_done,
-        )
+        self.config = vault_config(vault, remote_folder, name="Notas", first_sync_done=first_sync_done)
         self.rclone = stub_rclone()
         self.launcher = FakeLauncher(*processes)
         self.dispatcher = EventDispatcher()
@@ -78,6 +75,16 @@ def test_successful_run_reports_success_history_and_batch(tmp_path):
     engine.rclone.ensure_remote_dir.assert_called_once_with("vault")
 
 
+def test_successful_run_marks_the_vault_as_synced(tmp_path):
+    engine = Engine(tmp_path)
+
+    engine.sync()
+
+    vault = engine.config.active_vault
+    assert (vault.last_sync_status, bool(vault.last_sync_timestamp)) == ("success", True)
+    assert engine.last_run.vault_name == "Notas"
+
+
 def test_conflicts_are_recorded_as_conflict(tmp_path):
     engine = Engine(tmp_path, FakeProcess(["ERROR : note.md: md5 differ"]))
 
@@ -94,7 +101,46 @@ def test_first_sync_of_a_vault_is_a_resync_and_later_ones_are_not(tmp_path):
     engine.sync()
 
     assert engine.resync_flags() == [True, False]
-    assert engine.config.first_sync_done is True
+    assert engine.config.active_vault.first_sync_done is True
+
+
+def switch_vault_during_the_run(engine, tmp_path):
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    other = VaultProfile(id="other", name="Otro", local_path=str(other_dir), remote_folder="other")
+    engine.config.vaults.append(other)
+    engine.rclone.ensure_remote_dir.side_effect = lambda folder: engine.config.set_active_vault("other")
+    return other
+
+
+def test_vault_switched_during_a_run_is_not_marked_as_synced(tmp_path):
+    engine = Engine(tmp_path, first_sync_done=False)
+    synced = engine.config.active_vault
+    other = switch_vault_during_the_run(engine, tmp_path)
+
+    assert engine.sync() is True
+
+    assert engine.launcher.commands[0][2:4] == [str(engine.vault), "gdrive:vault"]
+    assert (synced.first_sync_done, synced.last_sync_status) == (True, "success")
+    assert (other.first_sync_done, other.last_sync_status, other.last_sync_timestamp) == (False, "idle", "")
+
+
+def test_history_names_the_vault_that_was_synced_not_the_one_active_after(tmp_path):
+    engine = Engine(tmp_path)
+    switch_vault_during_the_run(engine, tmp_path)
+
+    engine.sync()
+
+    assert engine.last_run.vault_name == "Notas"
+
+
+def test_blank_vault_name_is_recorded_as_principal(tmp_path):
+    engine = Engine(tmp_path)
+    engine.config.active_vault.name = "   "
+
+    engine.sync()
+
+    assert engine.last_run.vault_name == "Principal"
 
 
 # --- Failed runs -------------------------------------------------------------
@@ -214,7 +260,7 @@ def test_invalid_remote_folder_reports_error_without_launching(tmp_path):
 
 def test_missing_vault_path_reports_error(tmp_path):
     engine = Engine(tmp_path)
-    engine.config.local_vault_path = ""
+    engine.config.active_vault.local_path = ""
 
     assert engine.sync() is False
     assert engine.worker.status == SyncStatus.ERROR
@@ -222,7 +268,7 @@ def test_missing_vault_path_reports_error(tmp_path):
 
 def test_nonexistent_vault_path_reports_error(tmp_path):
     engine = Engine(tmp_path)
-    engine.config.local_vault_path = str(tmp_path / "missing")
+    engine.config.active_vault.local_path = str(tmp_path / "missing")
 
     assert engine.sync() is False
     assert "no existe" in engine.worker.last_message.lower()

@@ -19,6 +19,7 @@ from src.core.rclone_manager import RcloneManager
 from src.core.history_manager import SyncHistoryManager
 from tests.fakes import FakeLauncher, FakeProcess, stub_rclone
 from src.main import acquire_single_instance_lock, release_single_instance_lock
+from tests.builders import vault_config
 
 
 # ============================================================================
@@ -33,18 +34,18 @@ def test_e01_vault_path_validation_rejects_root(isolated_env, headless_gui):
     mock_rclone.is_remote_configured.return_value = True
 
     with patch("customtkinter.CTk.__init__", return_value=None):
-        win = MainWindow(config_manager=cfg_mgr, worker=MagicMock(), rclone_mgr=mock_rclone)
+        win = MainWindow(config=vault_config(), config_manager=cfg_mgr, worker=MagicMock(), rclone_mgr=mock_rclone)
 
         # 1. Empty path rejected
-        win.cfg.local_vault_path = ""
+        win.cfg.active_vault.local_path = ""
         assert win.can_auto_start_sync() is False
 
         # 2. Filesystem root rejected
-        win.cfg.local_vault_path = str(Path("/").resolve())
+        win.cfg.active_vault.local_path = str(Path("/").resolve())
         assert win.can_auto_start_sync() is False
 
         # 3. User home rejected
-        win.cfg.local_vault_path = str(Path.home().resolve())
+        win.cfg.active_vault.local_path = str(Path.home().resolve())
         assert win.can_auto_start_sync() is False
 
 
@@ -55,7 +56,7 @@ def test_e02_deleted_vault_aborts_sync(isolated_env, tmp_path):
     """E-02: Local vault directory deleted while worker is running aborts safely."""
     vault = tmp_path / "ephemeral_vault"
     vault.mkdir()
-    cfg = ConfigData(local_vault_path=str(vault), remote_folder_name="vault")
+    cfg = vault_config(local_path=str(vault), remote_folder="vault")
     launcher = FakeLauncher()
     worker = SyncWorker(config=cfg, rclone_manager=stub_rclone(), launcher=launcher)
 
@@ -104,7 +105,7 @@ def test_e04_bisync_safety_trip_forbids_auto_resync(isolated_env, tmp_path):
     """E-04: Massive delete safety trip strictly forbids automatic --resync."""
     vault = tmp_path / "safe_vault"
     vault.mkdir()
-    cfg = ConfigData(local_vault_path=str(vault), remote_folder_name="vault", first_sync_done=True)
+    cfg = vault_config(local_path=str(vault), remote_folder="vault", first_sync_done=True)
     launcher = FakeLauncher(FakeProcess(
         ["Fatal error: Safety trip! Too many deletes (15 > 10). Must run --resync to recover."],
         returncode=1,
@@ -128,7 +129,7 @@ def test_e05_network_outage_error_handling(isolated_env, tmp_path):
     """E-05: Mid-sync network drop marks ERROR, preserves worker thread."""
     vault = tmp_path / "vault"
     vault.mkdir()
-    cfg = ConfigData(local_vault_path=str(vault), remote_folder_name="vault")
+    cfg = vault_config(local_path=str(vault), remote_folder="vault")
     launcher = FakeLauncher(FakeProcess(
         ["ERROR : Failed to copy: dial tcp: lookup oauth2.googleapis.com: no such host"],
         returncode=2,
@@ -179,7 +180,7 @@ def test_e07_large_batch_boundary(isolated_env, sample_vault):
     files = list(sample_vault.glob("**/*.md"))
     assert len(files) >= 60
 
-    cfg = ConfigData(local_vault_path=str(sample_vault), remote_folder_name="vault")
+    cfg = vault_config(local_path=str(sample_vault), remote_folder="vault")
     names = [f"Bulk/note_{i:03d}.md" for i in range(60)]
     launcher = FakeLauncher(FakeProcess(
         [f"2026/10/07 10:00:00 INFO  : {n}: Copied (new)" for n in names] + ["Bisync successful"]
@@ -229,7 +230,7 @@ def test_e09_concurrent_manual_sync(isolated_env, tmp_path):
     """E-09: Rapid duplicate clicks to trigger sync are ignored safely."""
     vault = tmp_path / "vault"
     vault.mkdir()
-    cfg = ConfigData(local_vault_path=str(vault))
+    cfg = vault_config(local_path=str(vault))
     worker = SyncWorker(config=cfg, rclone_manager=MagicMock())
 
     # When worker is already syncing
@@ -277,7 +278,7 @@ def test_e11_missing_desktop_tools(isolated_env):
     """E-11: Handles missing xdg-open or desktop launchers without crash."""
     require_feature("F-17")
     worker = MagicMock()
-    worker.config.local_vault_path = "/tmp/test"
+    worker.config.active_vault.local_path = "/tmp/test"
     from src.tray.tray_icon import TrayManager
     tray = TrayManager(worker=worker, on_open_gui=MagicMock(), on_exit=MagicMock())
 
@@ -341,15 +342,13 @@ def test_e14_vault_switch_in_flight(isolated_env, tmp_path):
             VaultProfile(id="v2", name="Vault 2", local_path=str(v2))
         ],
         active_vault_id="v1",
-        local_vault_path=str(v1)
     )
 
     worker = SyncWorker(config=cfg, rclone_manager=MagicMock())
     worker._is_syncing = True
 
     # Switching active vault profile
-    cfg.active_vault_id = "v2"
-    cfg.local_vault_path = str(v2)
+    cfg.set_active_vault("v2")
 
     # Worker finishes sync on v1
     worker._is_syncing = False

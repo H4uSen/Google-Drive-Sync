@@ -211,6 +211,7 @@ class MainWindow(ctk.CTk):
 
     def __init__(
         self,
+        config: ConfigData,
         config_manager: ConfigManager,
         worker: SyncWorker,
         rclone_mgr: RcloneManager,
@@ -222,7 +223,7 @@ class MainWindow(ctk.CTk):
         self.config_mgr = config_manager
         self.worker = worker
         self.rclone_mgr = rclone_mgr
-        self.cfg = self.config_mgr.load()
+        self.cfg = config
 
         # Connect history persistence
         self.history_manager = (
@@ -294,11 +295,11 @@ class MainWindow(ctk.CTk):
         self.log_search_entry = HeadlessStub(value="")
         self.lbl_log_count = HeadlessStub(text="Total: 0 | Mostrados: 0")
 
-        self.chk_realtime = HeadlessStub(value=1 if self.cfg.realtime_sync_enabled else 0)
-        self.entry_debounce = HeadlessStub(value=str(self.cfg.debounce_delay_seconds))
-        self.entry_local = HeadlessStub(value=self.cfg.local_vault_path)
-        self.entry_remote = HeadlessStub(value=self.cfg.remote_folder_name)
-        self.entry_interval = HeadlessStub(value=str(self.cfg.sync_interval_minutes))
+        self.chk_realtime = HeadlessStub(value=1 if self.cfg.active_vault.realtime_sync_enabled else 0)
+        self.entry_debounce = HeadlessStub(value=str(self.cfg.active_vault.debounce_delay_seconds))
+        self.entry_local = HeadlessStub(value=self.cfg.active_vault.local_path)
+        self.entry_remote = HeadlessStub(value=self.cfg.active_vault.remote_folder)
+        self.entry_interval = HeadlessStub(value=str(self.cfg.active_vault.sync_interval_minutes))
         self.chk_autostart = HeadlessStub(value=1 if is_autostart_enabled() else 0)
 
         self.quota_bar = HeadlessStub(value=0.0)
@@ -511,7 +512,7 @@ class MainWindow(ctk.CTk):
         self.local_row.grid_columnconfigure(0, weight=1)
 
         self.entry_local = ctk.CTkEntry(self.local_row, placeholder_text="/ruta/a/tu/ObsidianVault")
-        self.entry_local.insert(0, self.cfg.local_vault_path)
+        self.entry_local.insert(0, self.cfg.active_vault.local_path)
         self.entry_local.grid(row=0, column=0, padx=(0, 8), sticky="we")
 
         self.btn_browse = ctk.CTkButton(self.local_row, text="Examinar...", width=100, command=self._browse_folder)
@@ -525,7 +526,7 @@ class MainWindow(ctk.CTk):
         ).grid(row=2, column=0, padx=14, pady=(10, 2), sticky="w")
 
         self.entry_remote = ctk.CTkEntry(self.form_frame, placeholder_text="ObsidianVault")
-        self.entry_remote.insert(0, self.cfg.remote_folder_name)
+        self.entry_remote.insert(0, self.cfg.active_vault.remote_folder)
         self.entry_remote.grid(row=3, column=0, columnspan=2, padx=14, pady=4, sticky="we")
 
         # Intervalo
@@ -536,7 +537,7 @@ class MainWindow(ctk.CTk):
         ).grid(row=4, column=0, padx=14, pady=(10, 2), sticky="w")
 
         self.entry_interval = ctk.CTkEntry(self.form_frame, width=120)
-        self.entry_interval.insert(0, str(self.cfg.sync_interval_minutes))
+        self.entry_interval.insert(0, str(self.cfg.active_vault.sync_interval_minutes))
         self.entry_interval.grid(row=5, column=0, padx=14, pady=(4, 12), sticky="w")
 
         # Checkboxes
@@ -559,7 +560,7 @@ class MainWindow(ctk.CTk):
             command=self._save_form,
         )
         self.chk_realtime.grid(row=7, column=0, columnspan=2, padx=14, pady=(4, 4), sticky="w")
-        if self.cfg.realtime_sync_enabled:
+        if self.cfg.active_vault.realtime_sync_enabled:
             self.chk_realtime.select()
         else:
             self.chk_realtime.deselect()
@@ -568,7 +569,7 @@ class MainWindow(ctk.CTk):
         self.debounce_row.grid(row=8, column=0, columnspan=2, padx=14, pady=(2, 10), sticky="w")
         ctk.CTkLabel(self.debounce_row, text="Espera tras escribir (segundos):", font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 8))
         self.entry_debounce = ctk.CTkEntry(self.debounce_row, width=60)
-        self.entry_debounce.insert(0, str(self.cfg.debounce_delay_seconds))
+        self.entry_debounce.insert(0, str(self.cfg.active_vault.debounce_delay_seconds))
         self.entry_debounce.pack(side="left")
         self.entry_debounce.bind("<FocusOut>", lambda _: self._save_form())
 
@@ -1337,10 +1338,10 @@ class MainWindow(ctk.CTk):
 
     def _open_vault_folder(self) -> None:
         """Open the local vault directory in the OS file explorer."""
-        if not self.cfg.local_vault_path:
+        if not self.cfg.active_vault.local_path:
             self._append_log("⚠ No hay carpeta de Vault local configurada.")
             return
-        p = Path(self.cfg.local_vault_path).resolve()
+        p = Path(self.cfg.active_vault.local_path).resolve()
         if not p.is_dir():
             self._append_log(f"⚠ La carpeta del Vault no existe: {p}")
             return
@@ -1373,13 +1374,13 @@ class MainWindow(ctk.CTk):
             if getattr(self.worker, "_running", False) and self.worker.watcher:
                 self.worker.watcher.stop()
                 self.worker.watcher = None
-                if self.cfg.realtime_sync_enabled and self.cfg.local_vault_path:
+                if self.cfg.active_vault.realtime_sync_enabled and self.cfg.active_vault.local_path:
                     from src.core.vault_watcher import VaultWatcher
                     self.worker.watcher = VaultWatcher(
                         callback=self.worker._on_watcher_change,
-                        debounce_seconds=self.cfg.debounce_delay_seconds,
+                        debounce_seconds=self.cfg.active_vault.debounce_delay_seconds,
                     )
-                    self.worker.watcher.start(self.cfg.local_vault_path)
+                    self.worker.watcher.start(self.cfg.active_vault.local_path)
             self._append_log(f"Cambiado a perfil de Vault: '{target.name}'")
 
     def _load_active_vault_into_form(self) -> None:
@@ -1445,48 +1446,48 @@ class MainWindow(ctk.CTk):
 
     def _save_form(self) -> None:
         """Save form input values to configuration data and hot-reload watcher."""
+        vault = self.cfg.active_vault
         try:
             interval = int(self.entry_interval.get())
         except (ValueError, AttributeError):
             interval = 2
         if hasattr(self, "entry_local") and self.entry_local is not None:
-            self.cfg.local_vault_path = self.entry_local.get().strip()
+            vault.local_path = self.entry_local.get().strip()
 
         if hasattr(self, "entry_remote") and self.entry_remote is not None:
             raw_remote = self.entry_remote.get().strip().strip("/\\").replace("\\", "/")
             parts = [p for p in raw_remote.split("/") if p]
             if not raw_remote or raw_remote == "." or ".." in parts:
                 raw_remote = "ObsidianVault"
-            self.cfg.remote_folder_name = raw_remote
+            vault.remote_folder = raw_remote
 
-        self.cfg.sync_interval_minutes = max(1, interval)
+        vault.sync_interval_minutes = max(1, interval)
 
         try:
             debounce = int(self.entry_debounce.get())
         except (ValueError, AttributeError):
             debounce = 5
-        self.cfg.debounce_delay_seconds = max(1, min(60, debounce))
+        vault.debounce_delay_seconds = max(1, min(60, debounce))
 
         if hasattr(self, "chk_realtime") and self.chk_realtime is not None:
-            self.cfg.realtime_sync_enabled = bool(self.chk_realtime.get())
+            vault.realtime_sync_enabled = bool(self.chk_realtime.get())
 
         self.config_mgr.save(self.cfg)
-        self.worker.config = self.cfg
 
         # Actualizar watcher en caliente si el worker está activo
         if getattr(self.worker, "_running", False):
-            if not self.cfg.realtime_sync_enabled and self.worker.watcher:
+            if not vault.realtime_sync_enabled and self.worker.watcher:
                 self.worker.watcher.stop()
                 self.worker.watcher = None
-            elif self.cfg.realtime_sync_enabled and not self.worker.watcher and self.cfg.local_vault_path:
+            elif vault.realtime_sync_enabled and not self.worker.watcher and vault.local_path:
                 from src.core.vault_watcher import VaultWatcher
                 self.worker.watcher = VaultWatcher(
                     callback=self.worker._on_watcher_change,
-                    debounce_seconds=self.cfg.debounce_delay_seconds,
+                    debounce_seconds=vault.debounce_delay_seconds,
                 )
-                self.worker.watcher.start(self.cfg.local_vault_path)
+                self.worker.watcher.start(vault.local_path)
             elif self.worker.watcher:
-                self.worker.watcher.handler.debounce_seconds = self.cfg.debounce_delay_seconds
+                self.worker.watcher.handler.debounce_seconds = vault.debounce_delay_seconds
 
     def _execute_auth_process(self, cmd: list[str]) -> bool:
         """Execute rclone auth command, streaming output and opening browser automatically."""
@@ -1635,9 +1636,9 @@ class MainWindow(ctk.CTk):
 
     def can_auto_start_sync(self) -> bool:
         """Check whether automatic/manual sync start meets prerequisites."""
-        if not self.cfg.local_vault_path:
+        if not self.cfg.active_vault.local_path:
             return False
-        vault_p = Path(self.cfg.local_vault_path).resolve()
+        vault_p = Path(self.cfg.active_vault.local_path).resolve()
         if not vault_p.is_dir() or vault_p == Path(vault_p.anchor) or vault_p == Path.home():
             return False
         return self.rclone_mgr.is_remote_configured("gdrive")
@@ -1658,12 +1659,12 @@ class MainWindow(ctk.CTk):
         """Toggle synchronization between active and stopped states."""
         self._save_form()
         if not self.worker._running:
-            if not self.cfg.local_vault_path:
+            if not self.cfg.active_vault.local_path:
                 self._append_log("⚠ Advertencia: Selecciona la ruta local de tu Vault de Obsidian antes de iniciar.")
                 return
-            vault_p = Path(self.cfg.local_vault_path).resolve()
+            vault_p = Path(self.cfg.active_vault.local_path).resolve()
             if not vault_p.is_dir():
-                self._append_log(f"⚠ Error: La carpeta del Vault no existe o no es accesible: {self.cfg.local_vault_path}")
+                self._append_log(f"⚠ Error: La carpeta del Vault no existe o no es accesible: {self.cfg.active_vault.local_path}")
                 return
             if vault_p == Path(vault_p.anchor) or vault_p == Path.home():
                 self._append_log("⚠ Error de seguridad: No se permite sincronizar la raíz del sistema o la carpeta de usuario.")

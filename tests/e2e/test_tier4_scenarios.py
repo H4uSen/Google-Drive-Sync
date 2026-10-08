@@ -18,6 +18,7 @@ from src.core.sync_worker import SyncWorker, SyncStatus
 from src.tray.tray_icon import TrayManager
 from src.core.rclone_manager import RcloneManager
 from tests.fakes import FakeLauncher, FakeProcess, stub_rclone
+from tests.builders import vault_config
 
 
 # ============================================================================
@@ -29,17 +30,17 @@ def test_s01_first_run_onboarding_workflow(isolated_env, sample_vault):
     cfg = cfg_mgr.load()
 
     # Initial state: unconfigured
-    assert cfg.local_vault_path == ""
-    assert not cfg.first_sync_done
+    assert cfg.active_vault.local_path == ""
+    assert not cfg.active_vault.first_sync_done
 
     # User sets up vault
-    cfg.local_vault_path = str(sample_vault)
-    cfg.remote_folder_name = "Obsidian_Backup"
+    cfg.active_vault.local_path = str(sample_vault)
+    cfg.active_vault.remote_folder = "Obsidian_Backup"
     cfg_mgr.save(cfg)
 
     # Reload from disk to verify persistence
     reloaded_cfg = cfg_mgr.load()
-    assert reloaded_cfg.local_vault_path == str(sample_vault)
+    assert reloaded_cfg.active_vault.local_path == str(sample_vault)
 
     # Initial sync execution (resync=True on first run)
     launcher = FakeLauncher(FakeProcess(["Bisync successful"]))
@@ -48,7 +49,7 @@ def test_s01_first_run_onboarding_workflow(isolated_env, sample_vault):
     success = worker._execute_sync()
     assert success is True
     assert worker.status == SyncStatus.SUCCESS
-    assert reloaded_cfg.first_sync_done is True
+    assert reloaded_cfg.active_vault.first_sync_done is True
 
     # The first sync of a Vault is a Resync
     assert launcher.commands[0][-1] == "--resync"
@@ -60,13 +61,7 @@ def test_s01_first_run_onboarding_workflow(isolated_env, sample_vault):
 def test_s02_headless_daemon_workflow(isolated_env, sample_vault):
     """S-02: --minimized launch -> background watcher -> note change -> auto sync -> tray update."""
     cfg_mgr = ConfigManager()
-    cfg = ConfigData(
-        local_vault_path=str(sample_vault),
-        remote_folder_name="vault",
-        first_sync_done=True,
-        realtime_sync_enabled=True,
-        debounce_delay_seconds=1
-    )
+    cfg = vault_config(local_path=str(sample_vault), remote_folder="vault", first_sync_done=True, realtime_sync_enabled=True, debounce_delay_seconds=1)
     cfg_mgr.save(cfg)
 
     launcher = FakeLauncher()
@@ -143,7 +138,7 @@ def test_s03_daily_note_editing_workflow(isolated_env, sample_vault):
 def test_s04_offline_online_recovery_workflow(isolated_env, sample_vault):
     """S-04: Network failure -> error state & cooldown -> network restores -> retry succeeds."""
     import subprocess
-    cfg = ConfigData(local_vault_path=str(sample_vault), remote_folder_name="vault")
+    cfg = vault_config(local_path=str(sample_vault), remote_folder="vault")
     offline = ["ERROR : Connection refused: dial tcp"]
     launcher = FakeLauncher(
         FakeProcess(offline, returncode=1),
@@ -191,8 +186,6 @@ def test_s05_multi_vault_switching_workflow(isolated_env, tmp_path):
             VaultProfile(id="v_pers", name="Personal", local_path=str(v2), remote_folder="PersonalRemote"),
         ],
         active_vault_id="v_work",
-        local_vault_path=str(v1),
-        remote_folder_name="WorkRemote"
     )
     cfg_mgr.save(cfg)
 
@@ -206,10 +199,7 @@ def test_s05_multi_vault_switching_workflow(isolated_env, tmp_path):
     assert launcher.commands[-1][-1] == "--resync"
 
     # 2. Switch to Personal Vault
-    cfg.active_vault_id = "v_pers"
-    cfg.local_vault_path = str(v2)
-    cfg.remote_folder_name = "PersonalRemote"
-    cfg.first_sync_done = False
+    assert cfg.set_active_vault("v_pers") is True
     cfg_mgr.save(cfg)
 
     success = worker._execute_sync()

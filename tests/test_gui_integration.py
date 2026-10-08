@@ -67,6 +67,7 @@ def test_env(tmp_path):
 
     return {
         "tmp_path": tmp_path,
+        "cfg": cfg,
         "cfg_mgr": cfg_mgr,
         "history_mgr": history_mgr,
         "log_handler": log_handler,
@@ -83,6 +84,7 @@ class TestTabbedNavigation:
     def test_tabview_initialization_and_three_tabs(self, test_env):
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -100,6 +102,7 @@ class TestTabbedNavigation:
     def test_tab_alias_routing(self, test_env):
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -120,6 +123,7 @@ class TestSyncProgressAndActiveFile:
     def test_set_sync_progress_bounds_and_clamping(self, test_env):
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -144,6 +148,7 @@ class TestSyncProgressAndActiveFile:
     def test_set_active_file_label_formatting(self, test_env):
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -159,6 +164,7 @@ class TestSyncProgressAndActiveFile:
     def test_sync_speed_and_bytes_labels(self, test_env):
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -173,6 +179,7 @@ class TestSyncProgressAndActiveFile:
     def test_progress_updated_event_integration(self, test_env):
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -196,6 +203,7 @@ class TestSyncProgressAndActiveFile:
     def test_file_transferred_event_integration(self, test_env):
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -229,6 +237,7 @@ class TestStatusBadgesAndWorkerIntegration:
     def test_status_changed_event_updates_badge(self, test_env):
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -250,6 +259,7 @@ class TestStatusBadgesAndWorkerIntegration:
     def test_conflict_detected_event_updates_badge(self, test_env):
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -264,6 +274,7 @@ class TestStatusBadgesAndWorkerIntegration:
     def test_batch_completed_resets_progress(self, test_env):
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -295,6 +306,7 @@ class TestActivityHistoryIntegration:
 
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -310,6 +322,7 @@ class TestActivityHistoryIntegration:
     def test_history_empty_state(self, test_env):
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -324,6 +337,7 @@ class TestActivityHistoryIntegration:
 
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -349,6 +363,7 @@ class TestActivityHistoryIntegration:
 
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -365,6 +380,7 @@ class TestActivityHistoryIntegration:
     def test_history_auto_refresh_on_batch_complete_event(self, test_env):
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -396,6 +412,7 @@ class TestDiagnosticLogViewerIntegration:
 
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -417,6 +434,7 @@ class TestDiagnosticLogViewerIntegration:
 
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -438,6 +456,7 @@ class TestDiagnosticLogViewerIntegration:
 
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -456,6 +475,7 @@ class TestDiagnosticLogViewerIntegration:
 
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -474,6 +494,7 @@ class TestDiagnosticLogViewerIntegration:
 
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -489,6 +510,7 @@ class TestDiagnosticLogViewerIntegration:
     def test_log_viewer_listener_cleanup_on_destroy(self, test_env):
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -531,6 +553,7 @@ class TestHeadlessCompatibility:
     def test_run_on_ui_thread_safe_execution(self, test_env):
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -576,6 +599,7 @@ class TestHeadlessCompatibility:
     def test_execute_auth_process_success(self, test_env):
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
@@ -597,6 +621,7 @@ class TestHeadlessCompatibility:
     def test_execute_auth_process_handles_failure(self, test_env):
         with patch("customtkinter.CTk.__init__", return_value=None):
             win = MainWindow(
+                config=test_env["cfg"],
                 config_manager=test_env["cfg_mgr"],
                 worker=test_env["worker"],
                 rclone_mgr=test_env["rclone_mock"],
