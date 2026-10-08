@@ -17,6 +17,7 @@ from src.core.config import ConfigManager, ConfigData, VaultProfile
 from src.core.sync_worker import SyncWorker, SyncStatus, COLOR_MAP
 from src.core.rclone_manager import RcloneManager
 from src.core.history_manager import SyncHistoryManager, SyncRunRecord
+from tests.fakes import FakeLauncher, stub_rclone
 from src.utils.log_handler import GuiLogHandler, LogEntry
 from src.core.events import (
     EventDispatcher,
@@ -53,10 +54,16 @@ def test_env(tmp_path):
     log_handler = GuiLogHandler(max_entries=200)
     dispatcher = EventDispatcher()
 
-    rclone_mock = MagicMock(spec=RcloneManager)
+    rclone_mock = stub_rclone()
     rclone_mock.is_remote_configured.return_value = True
 
-    worker = SyncWorker(config=cfg, rclone_manager=rclone_mock, event_dispatcher=dispatcher, history_manager=history_mgr)
+    worker = SyncWorker(
+        config=cfg,
+        rclone_manager=rclone_mock,
+        event_dispatcher=dispatcher,
+        history_manager=history_mgr,
+        launcher=FakeLauncher(),
+    )
 
     return {
         "tmp_path": tmp_path,

@@ -282,6 +282,9 @@ class SyncWorker:
             dispatcher=self.dispatcher,
         )
         with self._run_lock:
+            # A cancel that reached the run being replaced (e.g. before a stale-lock retry) carries over.
+            if self._current_run is not None and self._current_run.cancelled:
+                run.cancel()
             self._current_run = run
         return run
 

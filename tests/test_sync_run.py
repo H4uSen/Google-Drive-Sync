@@ -294,3 +294,14 @@ def test_a_one_megabyte_line_is_parsed(vault):
     result = make_run(vault, launcher).execute()
 
     assert result.files == [name]
+
+
+def test_run_cancelled_before_execute_does_not_validate_or_write_filters(tmp_path):
+    run, launcher = run_with(SyncRequest("/", "../escape"), tmp_path)
+
+    run.cancel()
+    result = run.execute()
+
+    assert result.cancelled
+    assert launcher.commands == []
+    assert not (tmp_path / "filters.txt").exists()

@@ -316,8 +316,11 @@ class SyncRun:
 
     def execute(self) -> SyncRunResult:
         start = time.time()
-        cmd = self._command()
         result = SyncRunResult(returncode=None)
+        if self._cancelled:
+            result.cancelled = True
+            return result
+        cmd = self._command()
         with self._lock:
             if self._cancelled:
                 result.cancelled = True

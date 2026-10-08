@@ -5,16 +5,14 @@ events. rclone runs are scripted through FakeLauncher; RcloneManager is stubbed.
 import json
 import threading
 import time
-from unittest.mock import MagicMock
 
 import pytest
 
 from src.core.config import ConfigData
 from src.core.events import EventDispatcher, EventType
 from src.core.history_manager import SyncHistoryManager
-from src.core.rclone_manager import RcloneManager
 from src.core.sync_worker import SyncStatus, SyncWorker, clean_error_message, try_recover_stale_lock
-from tests.fakes import FakeLauncher, FakeProcess
+from tests.fakes import FakeLauncher, FakeProcess, stub_rclone
 
 GUARD_LINES = [
     "ERROR : Bisync critical error: cannot find prior Path1 or Path2 listings",
@@ -34,8 +32,7 @@ class Engine:
             remote_folder_name=remote_folder,
             first_sync_done=first_sync_done,
         )
-        self.rclone = MagicMock(spec=RcloneManager)
-        self.rclone.ensure_rclone_binary.return_value = "/opt/rclone"
+        self.rclone = stub_rclone()
         self.launcher = FakeLauncher(*processes)
         self.dispatcher = EventDispatcher()
         self.history = SyncHistoryManager(tmp_path / "history.json")
@@ -160,6 +157,29 @@ def test_stale_lock_from_a_dead_process_is_cleared_and_the_run_retried(tmp_path)
     assert len(engine.launcher.commands) == 2
     assert not lock_file.exists()
     assert engine.last_run.files_transferred == ["a.md"]
+
+
+def test_cancel_just_before_the_stale_lock_retry_stops_the_retry(tmp_path):
+    lock_file = tmp_path / "stale.lck"
+    lock_file.write_text(json.dumps({"PID": "99999999"}), encoding="utf-8")
+    engine = Engine(
+        tmp_path,
+        FakeProcess([f"ERROR : Bisync critical error: lock file already exists: {lock_file}"], returncode=1),
+        FakeProcess(copied("a.md")),
+    )
+
+    def binary_then_cancel_on_retry():
+        if engine.rclone.ensure_rclone_binary.call_count == 2:
+            engine.worker.cancel_sync()
+        return "/opt/rclone"
+
+    engine.rclone.ensure_rclone_binary.side_effect = binary_then_cancel_on_retry
+
+    assert engine.sync() is False
+
+    assert len(engine.launcher.commands) == 1
+    assert engine.worker.status == SyncStatus.IDLE
+    assert "cancelada" in engine.worker.last_message.lower()
 
 
 def test_timed_out_run_reports_error(tmp_path):
