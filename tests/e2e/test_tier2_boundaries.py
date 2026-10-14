@@ -268,7 +268,7 @@ def test_e10_headless_display_safety(isolated_env, monkeypatch):
         from src.main import main
         mock_app.mainloop.side_effect = None
         main()
-        mock_app.withdraw.assert_called_once()
+        assert mock_window_cls.call_args.kwargs["start_hidden"] is True
 
 
 # ============================================================================

@@ -60,7 +60,14 @@ def main():
     rclone_mgr = RcloneManager()
     worker = SyncWorker(config=cfg, rclone_manager=rclone_mgr)
 
-    app = MainWindow(config=cfg, config_manager=config_mgr, worker=worker, rclone_mgr=rclone_mgr)
+    start_minimized = "--minimized" in sys.argv
+    app = MainWindow(
+        config=cfg,
+        config_manager=config_mgr,
+        worker=worker,
+        rclone_mgr=rclone_mgr,
+        start_hidden=start_minimized,
+    )
 
     def on_open_gui():
         app.after(0, app.deiconify)
@@ -92,9 +99,8 @@ def main():
     except Exception as e:
         logger.warning(f"No se pudo iniciar el icono en System Tray: {e}")
 
-    # Si se pasa --minimized ocultamos la ventana y evaluamos auto-arranque
-    if "--minimized" in sys.argv:
-        app.withdraw()
+    # Con --minimized la ventana ya nace oculta; evaluamos auto-arranque
+    if start_minimized:
         if app.can_auto_start_sync():
             logger.info("Iniciando motor de sincronización automáticamente (--minimized)...")
             app.start_sync_engine()

@@ -218,6 +218,7 @@ class MainWindow(ctk.CTk):
         history_manager: Optional[SyncHistoryManager] = None,
         log_handler: Optional[GuiLogHandler] = None,
         event_dispatcher: Optional[EventDispatcher] = None,
+        start_hidden: bool = False,
     ) -> None:
         super().__init__()
         self.config_mgr = config_manager
@@ -263,7 +264,11 @@ class MainWindow(ctk.CTk):
             self.tk = None
             return
 
-        # 3. Real UI construction when display server is available
+        # 3. Real UI construction when display server is available.
+        # Hide before building widgets: CTk widgets call update_idletasks(),
+        # which maps the root window and makes it flash on a minimized start.
+        if start_hidden:
+            self.withdraw()
         self.title("Obsidian GDrive Sync")
         self.geometry("720x660")
         self.minsize(640, 560)

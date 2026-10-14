@@ -532,7 +532,7 @@ def test_f27_minimized_startup(isolated_env):
         mock_app.mainloop.side_effect = None
         main()
 
-        mock_app.withdraw.assert_called_once()
+        assert mock_window_cls.call_args.kwargs["start_hidden"] is True
         mock_app.start_sync_engine.assert_called_once()
 
 

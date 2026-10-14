@@ -22,7 +22,7 @@ def test_startup_minimized_starts_sync_if_configured():
         mock_app.mainloop.side_effect = None
         main()
 
-        mock_app.withdraw.assert_called_once()
+        assert mock_window_cls.call_args.kwargs["start_hidden"] is True
         mock_app.start_sync_engine.assert_called_once()
 
 def test_startup_minimized_notifies_if_not_configured():
@@ -46,7 +46,7 @@ def test_startup_minimized_notifies_if_not_configured():
         mock_app.mainloop.side_effect = None
         main()
 
-        mock_app.withdraw.assert_called_once()
+        assert mock_window_cls.call_args.kwargs["start_hidden"] is True
         mock_app.start_sync_engine.assert_not_called()
         mock_tray.notify.assert_called_once_with(
             "Obsidian GDrive Sync",
@@ -74,7 +74,7 @@ def test_startup_normal_mode_does_not_minimize_or_auto_start():
         mock_app.mainloop.side_effect = None
         main()
 
-        mock_app.withdraw.assert_not_called()
+        assert mock_window_cls.call_args.kwargs["start_hidden"] is False
         mock_app.start_sync_engine.assert_not_called()
         mock_tray.notify.assert_not_called()
 
