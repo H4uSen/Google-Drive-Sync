@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Obsidian GDrive Sync</title>
+  <meta name="description" content="Desktop app that keeps local Obsidian vaults in two-way sync with a folder in the user's own Google Drive.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header>
+    <nav>
+      <a href="./">Home</a>
+      <a href="privacy.html">Privacy Policy</a>
+      <a href="terms.html">Terms of Service</a>
+      <a href="https://github.com/H4uSen/Google-Drive-Sync">Source code</a>
+    </nav>
+  </header>
+
+  <h1>Obsidian GDrive Sync</h1>
+  <p class="lead">A desktop application for Linux and Windows that keeps your local Obsidian vaults in two-way sync with a folder in your own Google Drive.</p>
+
+  <h2>What it does</h2>
+  <ul>
+    <li>Synchronizes a local folder you choose with a folder in your Google Drive, in both directions, using <a href="https://rclone.org/">rclone</a> bisync.</li>
+    <li>Detects local changes in real time and syncs them on a schedule you configure.</li>
+    <li>Runs entirely on your computer. There is no server: your files and your Google account credentials never pass through any third party.</li>
+  </ul>
+
+  <h2>Why it needs access to Google Drive</h2>
+  <p>To upload your notes to your Drive folder and download changes made from other devices, the app asks you to sign in with Google and grant access to Google Drive. It only reads and writes the Drive folder you configure for each vault. See the <a href="privacy.html">Privacy Policy</a> for details.</p>
+
+  <h2>Get it</h2>
+  <p>The app is open source. Download and build instructions are in the <a href="https://github.com/H4uSen/Google-Drive-Sync">GitHub repository</a>.</p>
+
+  <h2 lang="es">En español</h2>
+  <div lang="es">
+    <p>Obsidian GDrive Sync es una aplicación de escritorio para Linux y Windows que mantiene tus vaults de Obsidian sincronizados en ambos sentidos con una carpeta de tu propio Google Drive. Funciona por completo en tu computadora, sin servidores intermedios. Pide acceso a Google Drive únicamente para subir y descargar los archivos de la carpeta que configures. Consulta la <a href="privacy.html#es">Política de privacidad</a> y los <a href="terms.html#es">Términos del servicio</a>.</p>
+  </div>
+
+  <footer>
+    Obsidian GDrive Sync is an independent open-source project. It is not affiliated with, endorsed by, or sponsored by Google LLC or Obsidian (Dynalist Inc.). Google Drive is a trademark of Google LLC.
+  </footer>
+</main>
+</body>
+</html>

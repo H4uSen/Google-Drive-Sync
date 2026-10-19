@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy Policy · Obsidian GDrive Sync</title>
+  <meta name="description" content="How Obsidian GDrive Sync accesses, uses, stores and shares Google user data.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header>
+    <nav>
+      <a href="./">Home</a>
+      <a href="privacy.html">Privacy Policy</a>
+      <a href="terms.html">Terms of Service</a>
+      <a href="#es">Español</a>
+    </nav>
+  </header>
+
+  <h1>Privacy Policy</h1>
+  <p class="meta">Last updated: October 18, 2026</p>
+
+  <p>Obsidian GDrive Sync ("the app") is an open-source desktop application that synchronizes folders on your computer with folders in your own Google Drive. This policy explains what Google user data the app accesses and what it does with it.</p>
+
+  <div class="card">
+    <strong>In short:</strong> the app runs only on your computer. It has no server, no analytics and no telemetry. Your files and your Google credentials stay on your device and in your own Google Drive. The developer never receives them.
+  </div>
+
+  <h2>Data the app accesses</h2>
+  <ul>
+    <li><strong>Google Drive files and folders.</strong> With the Google Drive scope (<code>https://www.googleapis.com/auth/drive</code>), the app lists, reads, creates, updates and deletes files <em>only inside the Drive folder you configure for each vault</em>, so both sides stay identical. It does not open, index or change anything else in your Drive.</li>
+    <li><strong>Storage quota.</strong> The app reads your Drive's total, used and free space to show it in the interface.</li>
+    <li><strong>OAuth tokens.</strong> When you sign in, Google issues an access token and a refresh token so the app can act on your behalf.</li>
+  </ul>
+
+  <h2>How the data is used</h2>
+  <p>Google user data is used only to provide the app's user-facing feature: two-way synchronization between your local vault folder and your Drive folder, and the storage indicator. It is not used for advertising, profiling, or training machine-learning models, and it is never read by humans.</p>
+
+  <h2>Storage</h2>
+  <ul>
+    <li>OAuth tokens are stored only on your computer, in the configuration file of <a href="https://rclone.org/">rclone</a> (the open-source sync engine the app uses), protected by your operating system's user permissions.</li>
+    <li>The app keeps local files on your computer: its settings, a sync history and diagnostic logs (which can include file names and paths). They never leave your computer unless you share them yourself.</li>
+    <li>File contents are transferred directly between your computer and Google's servers over HTTPS.</li>
+  </ul>
+
+  <h2>Sharing</h2>
+  <p>The app does not sell, rent, transfer or share Google user data with anyone. The developer operates no server that could receive it. The only party the app communicates with on your behalf is Google, through the Google Drive API.</p>
+
+  <h2>Limited Use</h2>
+  <p>Obsidian GDrive Sync's use and transfer to any other app of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+
+  <h2>Retention and deletion</h2>
+  <ul>
+    <li>Revoke the app's access at any time from <a href="https://myaccount.google.com/permissions">your Google Account permissions page</a>.</li>
+    <li>To delete everything stored locally, uninstall the app and delete its configuration folder (<code>~/.config/obsidian-gdrive-sync</code> on Linux, <code>%APPDATA%\ObsidianGDriveSync</code> on Windows) and the <code>gdrive</code> remote in your rclone configuration (<code>rclone config delete gdrive</code>).</li>
+    <li>Files synchronized to your Drive remain in your Drive under your control. The app never keeps copies anywhere else.</li>
+  </ul>
+
+  <h2>Security</h2>
+  <p>All communication with Google uses HTTPS. Credentials are stored with permissions restricted to your user account. Because nothing is sent to the developer, there is no central database that could be breached.</p>
+
+  <h2>Children</h2>
+  <p>The app is not directed to children under 13 and does not knowingly collect their data.</p>
+
+  <h2>Changes</h2>
+  <p>Changes to this policy will be published on this page with a new "Last updated" date.</p>
+
+  <h2>Contact</h2>
+  <p>Questions about this policy: <a href="mailto:hausencito@gmail.com">hausencito@gmail.com</a>, or open an issue in the <a href="https://github.com/H4uSen/Google-Drive-Sync/issues">GitHub repository</a>.</p>
+
+  <section id="es" lang="es">
+    <h2>Política de privacidad (español)</h2>
+    <p class="meta">Última actualización: 18 de octubre de 2026</p>
+    <p>Obsidian GDrive Sync («la app») es una aplicación de escritorio de código abierto que sincroniza carpetas de tu computadora con carpetas de tu propio Google Drive.</p>
+    <h3>Datos a los que accede</h3>
+    <ul>
+      <li><strong>Archivos y carpetas de Google Drive.</strong> Con el permiso de Google Drive (<code>https://www.googleapis.com/auth/drive</code>), la app lista, lee, crea, actualiza y elimina archivos <em>solo dentro de la carpeta de Drive que configures para cada vault</em>, para que ambos lados queden iguales. No abre, indexa ni modifica nada más de tu Drive.</li>
+      <li><strong>Cuota de almacenamiento.</strong> Lee el espacio total, usado y libre de tu Drive para mostrarlo en la interfaz.</li>
+      <li><strong>Tokens OAuth.</strong> Al iniciar sesión, Google emite tokens para que la app actúe en tu nombre.</li>
+    </ul>
+    <h3>Uso</h3>
+    <p>Los datos de usuario de Google se usan únicamente para la sincronización bidireccional y el indicador de almacenamiento. No se usan para publicidad, perfiles ni entrenamiento de modelos, y ninguna persona los lee.</p>
+    <h3>Almacenamiento</h3>
+    <p>Los tokens se guardan solo en tu computadora, en la configuración de rclone, protegidos por los permisos de tu usuario. La configuración, el historial y los logs de diagnóstico (que pueden incluir nombres y rutas de archivos) también se quedan en tu equipo. El contenido de los archivos viaja directamente entre tu computadora y Google por HTTPS.</p>
+    <h3>Compartición</h3>
+    <p>La app no vende, alquila, transfiere ni comparte datos de usuario de Google con nadie. El desarrollador no opera ningún servidor que pueda recibirlos.</p>
+    <h3>Uso limitado</h3>
+    <p>El uso y la transferencia a cualquier otra app de la información recibida de las APIs de Google por parte de Obsidian GDrive Sync se ajustará a la <a href="https://developers.google.com/terms/api-services-user-data-policy">Política de datos de usuario de los servicios de las APIs de Google</a>, incluidos los requisitos de uso limitado.</p>
+    <h3>Retención y eliminación</h3>
+    <p>Puedes revocar el acceso en cualquier momento desde <a href="https://myaccount.google.com/permissions">los permisos de tu cuenta de Google</a>. Para borrar todo lo guardado localmente, desinstala la app, elimina su carpeta de configuración y ejecuta <code>rclone config delete gdrive</code>. Tus archivos en Drive siguen siendo tuyos y la app no guarda copias en ningún otro lugar.</p>
+    <h3>Contacto</h3>
+    <p><a href="mailto:hausencito@gmail.com">hausencito@gmail.com</a>, o abre un issue en el <a href="https://github.com/H4uSen/Google-Drive-Sync/issues">repositorio de GitHub</a>.</p>
+  </section>
+
+  <footer>
+    Obsidian GDrive Sync is not affiliated with, endorsed by, or sponsored by Google LLC or Obsidian. Google Drive is a trademark of Google LLC.
+  </footer>
+</main>
+</body>
+</html>
